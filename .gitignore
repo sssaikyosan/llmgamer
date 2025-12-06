@@ -1,0 +1,26 @@
+# Python essentials
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+
+# Logs and Databases
+*.log
+
+# Runtime data (screenshots, temporary images)
+*.png
+*.jpg
+workspace/*.png
+workspace/*.jpg
+
+# OS generated files
+.DS_Store
+Thumbs.db

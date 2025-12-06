@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import shutil
+import traceback
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from mcp import ClientSession, StdioServerParameters
@@ -144,14 +145,16 @@ class MCPManager:
         
         try:
             # Wait for initialization
-            await asyncio.wait_for(init_future, timeout=30.0)
+            await asyncio.wait_for(init_future, timeout=5.0)
             
             # If we are here, init succeeded
             tools = [t.name for t in self.active_servers[name].tools]
             return True, f"Successfully started server {name}. Tools: {tools}"
             
         except Exception as e:
-            msg = f"Failed to start server {name}: {e}"
+            # Capture full traceback to debug TaskGroup/async errors
+            error_details = traceback.format_exc()
+            msg = f"Failed to start server {name}:\nError: {e}\nTraceback:\n{error_details}"
             print(msg)
             # Cleanup failed entry
             if name in self.active_servers:

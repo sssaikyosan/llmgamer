@@ -42,6 +42,7 @@ class GameAgent:
         self.mcp_manager = MCPManager()
         self.task_manager = TaskManager(initial_task)
         self.history = []
+        self.screenshot_history = [] # Stores PIL Images of recent screenshots
         
     async def initialize(self):
         """Initialize the agent and start the meta_manager server."""
@@ -54,23 +55,68 @@ class GameAgent:
         if not success:
             print("CRITICAL ERROR: Failed to start meta_manager server.")
             sys.exit(1)
+
+        # Start Input Tools (for Basic Interactions)
+        if os.path.exists(os.path.join("servers", "input_tools.py")):
+             success, msg = await self.mcp_manager.start_server("input_tools")
+             if success:
+                 print("Input Tools Server started.")
+             else:
+                 print(f"Warning: Failed to start input_tools: {msg}")
             
         print("Agent Initialized. LLM can now create its own tools.")
 
     async def shutdown(self):
         await self.mcp_manager.shutdown_all()
 
-    async def get_screenshot(self) -> str:
-        # Check if the specific server is active to avoid errors during bootstrapping
-        if "game_interface" not in self.mcp_manager.active_servers:
-            return ""
-            
+    async def get_screenshot(self) -> tuple[str, float]:
         try:
-            result = await self.mcp_manager.call_tool("game_interface", "take_screenshot", {})
-            return result.content[0].text
+            import mss
+            import mss.tools
+            
+            with mss.mss() as sct:
+                # Get the primary monitor
+                monitor = sct.monitors[1]
+                
+                # Capture the screen
+                sct_img = sct.grab(monitor)
+                
+                # Convert to PNG
+                png_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
+                
+                # Load as PIL Image for preprocessing
+                from PIL import Image, ImageDraw
+                import io
+                img = Image.open(io.BytesIO(png_bytes))
+                
+                # Draw Grid Overlay
+                draw = ImageDraw.Draw(img)
+                width, height = img.size
+                grid_size = 100
+                
+                for x in range(0, width, grid_size):
+                    draw.line([(x, 0), (x, height)], fill=(255, 0, 0, 128), width=1)
+                for y in range(0, height, grid_size):
+                    draw.line([(0, y), (width, y)], fill=(255, 0, 0, 128), width=1)
+
+                # Draw Coordinates Text
+                for x in range(0, width, grid_size):
+                    for y in range(0, height, grid_size):
+                        # Draw coordinate text at intersections
+                        text = f"{x},{y}"
+                        # Simple shadow for readability
+                        draw.text((x+2, y+2), text, fill="black")
+                        draw.text((x, y), text, fill="red")
+
+                # Save back to bytes
+                buffered = io.BytesIO()
+                img.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                
+                return (img_str, time.time())
         except Exception as e:
-            print(f"Error getting screenshot: {e}")
-            return ""
+            print(f"Error taking screenshot: {e}")
+            return ("", 0.0)
 
     async def execute_tool(self, server_name: str, tool_name: str, args: Dict[str, Any]):
         print(f"Executing: {server_name}.{tool_name} with {args}")
@@ -126,7 +172,7 @@ class GameAgent:
             print(f"Failed to parse JSON: {text}")
             return None
 
-    async def think(self, screenshot_base64: str) -> Dict[str, Any]:
+    async def think(self, screenshot_base64: str, timestamp: float) -> Optional[Dict[str, Any]]:
         print("Thinking...")
         
         if not API_KEY:
@@ -159,85 +205,67 @@ class GameAgent:
                 # Using Gemini 2.0 Flash Experimental as requested (often referred to as the latest)
                 model = genai.GenerativeModel('gemini-3-pro-preview')
                 
+                import datetime
+                
+                # Use the passed timestamp for consistent time reference
+                if timestamp > 0:
+                    now = datetime.datetime.fromtimestamp(timestamp)
+                else:
+                    now = datetime.datetime.now()
+                    
+                current_timestamp = now.strftime("%H:%M:%S")
+
                 if screenshot_base64:
                     image_data = base64.b64decode(screenshot_base64)
                     from PIL import Image
                     import io
                     img = Image.open(io.BytesIO(image_data))
-                    inputs = [img]
+                    
+                    # Update History (Keep last 3) with timestamps
+                    self.screenshot_history.append({"time": current_timestamp, "img": img})
+                    if len(self.screenshot_history) > 3:
+                        self.screenshot_history.pop(0)
+                    
+                    # Inputs: Extract just the images for Gemini
+                    inputs = [item["img"] for item in self.screenshot_history]
+                    
+                    # Create a log of timestamps for the prompt
+                    visual_history_log = "\n".join(
+                        [f"   - Image {i}: Captured at {item['time']} {'(CURRENT)' if i == len(self.screenshot_history)-1 else ''}" 
+                         for i, item in enumerate(self.screenshot_history)]
+                    )
                 else:
                     inputs = []
+                    visual_history_log = "(No visual history available)"
 
-                import datetime
-                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                current_time = now.strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Approximate token count calculation (rough estimate: 1 token ~= 4 chars)
-                context_so_far = task_context + history_str + tools_desc
-                char_count = len(context_so_far)
-                approx_tokens = char_count // 4
-                
-                # Gemini 2.0 limit (safe estimate)
-                token_limit = 500000 
-                char_limit = token_limit * 4
+
 
                 prompt = f"""
                 You are an advanced AI Game Agent.
-                
-                ============================================================
-                [SYSTEM CONTEXT] (Read-Only Environment & State)
-                ============================================================
-                
-                1. SYSTEM STATUS
-                   - Current Time: {current_time}
-                   - Context Usage: {char_count:,} / {char_limit:,} chars (~{approx_tokens:,} tokens)
-                
-                2. RECENT HISTORY (Last 10 Actions)
-                   {history_str}
-                   
-                3. CORE SYSTEM TOOLS (Immutable)
-                   {core_desc}
-                   
-                ============================================================
-                [AGENT CONTEXT] (Mutable - You Control This)
-                ============================================================
-                
-                1. YOUR CURRENT PLAN & STATE
-                   {task_context}
-                   >> Update this state using the 'task_update' field in your JSON response.
-                
-                2. YOUR CUSTOM TOOLS (Mutable Body & Skills)
-                   {user_desc}
-                   >> Create, Delete, or Modify these using 'meta_manager' (create_mcp_server, etc).
-                
-                ============================================================
-                
-                IMPORTANT PHILOSOPHY:
-                You are an autonomous agent capable of building your own body and mind.
-                You have two main ways to persist information and capabilities:
-                
-                PHILOSOPHY & BEST PRACTICES:
-                
-                1. [VISUAL CONFIRMATION IS CRITICAL]
-                   - "Looking" is cheap. "Assuming" is expensive.
-                   - Before performing repetitive actions (like 1000 clicks), verify the target location with a screenshot.
-                   - After a major action, take another screenshot to verify success.
-                   - If you detect you are clicking "nothing" or an error occurs, STOP and re-assess.
-                   
-                2. [WORKSPACE ORGANIZATION]
-                   - ALL new tools and files MUST be created inside the 'workspace' directory.
-                   - Do not create files in the root directory.
-                   - Keep tool names descriptive (e.g., 'cookie_clicker_v2.py', 'upgrade_scanner.py').
-                   - Categorize your tools logically (Vision, Action, Strategy).
 
-                3. [SYSTEM STATUS]
-                   - Use 'task_update' to manage your Mind (Plans).
-                   - Use 'meta_manager' to manage your Body (Tools) and Memory (Files).
-                
-                Build what you need. Delete what you don't. Correct yourself if you fail.
-                
-                Analyze the situation (screenshot) and decide the next step.
-                
-                Output ONLY a JSON object with the following format:
+                [STATE]
+                Time: {current_time}
+                Visuals: {len(inputs)} images (Oldest -> Newest).
+                {visual_history_log}
+                History: {history_str}
+
+                [TOOLS]
+                Core (Immutable): {core_desc}
+                Custom (Mutable): {user_desc}
+
+                [CURRENT PLAN]
+                {task_context}
+                >> Update main/subtasks via 'task_update'.
+
+                [RULES]
+                1. Visuals: Analyze image history to verify actions and detect changes.
+                2. Workspace: All new files/tools must be in 'workspace/'.
+                3. Restrictions: NO terminal commands. NO installing new libraries.
+                4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time}}.
+
+                Analyze the situation and Output JSON ONLY:
                 {{
                     "thought": "Reasoning...",
                     "action_type": "CALL_TOOL" | "WAIT",
@@ -246,8 +274,8 @@ class GameAgent:
                     "args": {{ ... }},
                     "task_update": {{
                         "type": "ADD_SUBTASK" | "COMPLETE_SUBTASK" | "UPDATE_MAIN_TASK",
-                        "content": "description or new task",
-                        "id": 123 (for complete)
+                        "content": "...",
+                        "id": 123
                     }}
                 }}
                 """
@@ -261,123 +289,7 @@ class GameAgent:
                 print(f"LLM Error: {e}")
                 return None
 
-        elif LLM_PROVIDER == "lmstudio":
-            try:
-                from openai import OpenAI
-                
-                base_url = os.getenv("BASE_URL", "http://localhost:1234/v1")
-                api_key = os.getenv("API_KEY", "lm-studio") 
-                model_name = os.getenv("MODEL_NAME", "local-model")
-                
-                client = OpenAI(base_url=base_url, api_key=api_key)
-                
-                # Approximate token count for LM Studio
-                context_so_far = task_context + history_str + tools_desc
-                char_count = len(context_so_far)
-                approx_tokens = char_count // 4
-                
-                # LM Studio limit (conservative estimate, e.g. 8k or 32k depending on model)
-                token_limit = 20000 
-                char_limit = token_limit * 4
 
-                prompt = f"""
-                You are an advanced AI Game Agent.
-                
-                ============================================================
-                [SYSTEM CONTEXT] (Read-Only Environment & State)
-                ============================================================
-                
-                1. SYSTEM STATUS
-                   - Current Time: {current_time}
-                   - Context Usage: {char_count:,} / {char_limit:,} chars (~{approx_tokens:,} tokens)
-                
-                2. RECENT HISTORY (Last 10 Actions)
-                   {history_str}
-                   
-                3. CORE SYSTEM TOOLS (Immutable)
-                   {core_desc}
-                   
-                ============================================================
-                [AGENT CONTEXT] (Mutable - You Control This)
-                ============================================================
-                
-                1. YOUR CURRENT PLAN & STATE
-                   {task_context}
-                   >> Update this state using the 'task_update' field in your JSON response.
-                
-                2. YOUR CUSTOM TOOLS (Mutable Body & Skills)
-                   {user_desc}
-                   >> Create, Delete, or Modify these using 'meta_manager'.
-                
-                ============================================================
-                
-                PHILOSOPHY & BEST PRACTICES:
-                
-                1. [VISUAL CONFIRMATION IS CRITICAL]
-                   - Just because you calculated coordinates once doesn't mean they are static.
-                   - Verify locations frequently.
-                   - If an action takes a long time (many clicks), check in between.
-                   
-                2. [WORKSPACE ORGANIZATION]
-                   - ALL new content (Tools/Files) MUST go into 'workspace/'.
-                   - Keep it tidy.
-                
-                3. [ADAPTABILITY]
-                   - Use 'task_update' to manage your Mind (Plans).
-                   - Use 'meta_manager' to manage your Body (Tools).
-                
-                Build what you need. Delete what you don't.
-                
-                Analyze the situation and decide the next step.
-                
-                Output ONLY a JSON object:
-                {{
-                    "thought": "Reasoning...",
-                    "action_type": "CALL_TOOL" | "WAIT",
-                    "server_name": "...",
-                    "tool_name": "...",
-                    "args": {{ ... }},
-                    "task_update": {{
-                        "type": "ADD_SUBTASK" | "COMPLETE_SUBTASK" | "UPDATE_MAIN_TASK",
-                        "content": "description or new task",
-                        "id": 123 (for complete)
-                    }}
-                }}
-                """
-                
-                messages = [
-                    {
-                        "role": "system",
-                        "content": "You are an AI Game Agent. Output only JSON."
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                        ]
-                    }
-                ]
-                
-                if screenshot_base64:
-                    messages[1]["content"].append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{screenshot_base64}"
-                        }
-                    })
-
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    temperature=0.1,
-                )
-                
-                text = response.choices[0].message.content
-                return self._parse_response(text)
-
-            except Exception as e:
-                print(f"LLM Error (LM Studio): {e}")
-                return None
         
         return None
 
@@ -390,9 +302,9 @@ class GameAgent:
                 
                 await self.mcp_manager.cleanup_unused_servers()
 
-                screenshot = await self.get_screenshot()
+                screenshot, timestamp = await self.get_screenshot()
                 
-                decision = await self.think(screenshot)
+                decision = await self.think(screenshot, timestamp)
                 
                 if decision:
                     thought = decision.get("thought")
@@ -424,7 +336,7 @@ class GameAgent:
                         
                         # Execute the tool
                         result = await self.execute_tool(server, tool, args)
-                        self.history.append(f"Called {tool} with {args}")
+                        self.history.append(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}")
                         
                         # SPECIAL HANDLING: If the tool was create_mcp_server, automatically start the new server
                         if server == "meta_manager" and tool == "create_mcp_server":

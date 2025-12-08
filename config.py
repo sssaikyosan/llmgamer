@@ -12,6 +12,7 @@ class Config:
     API_KEY = os.getenv("API_KEY")
     GEMINI_RPM = int(os.getenv("GEMINI_RPM", "10"))
     GEMINI_RPD = int(os.getenv("GEMINI_RPD", "250"))
+    MAX_HISTORY = int(os.getenv("MAX_HISTORY", "10"))
     
     # Service Specific Settings
     LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")

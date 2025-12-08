@@ -48,25 +48,13 @@ class MCPManager:
     def _init_memory_tools(self) -> List[Dict[str, Any]]:
         return [
             {
-                "name": "add_memory",
-                "description": "Add a new memory (instruction/knowledge) to the agent's persistent state. Use short, descriptive titles.",
+                "name": "set_memory",
+                "description": "Add a new memory or update an existing one. Use this for tasks, facts, or state tracking.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "Short title for the memory."},
-                        "content": {"type": "string", "description": "The content of the memory/instruction."}
-                    },
-                    "required": ["title", "content"]
-                }
-            },
-            {
-                "name": "edit_memory",
-                "description": "Edit an existing memory by its title.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "The title of the memory to edit."},
-                        "content": {"type": "string", "description": "The new content."}
+                        "title": {"type": "string", "description": "Title for the memory."},
+                        "content": {"type": "string", "description": "The content to store."}
                     },
                     "required": ["title", "content"]
                 }
@@ -345,10 +333,8 @@ class MCPManager:
 
         output_text = ""
         try:
-            if tool_name == "add_memory":
-                output_text = self.memory_manager_instance.add_memory(args.get("title"), args.get("content"))
-            elif tool_name == "edit_memory":
-                output_text = self.memory_manager_instance.edit_memory(args.get("title"), args.get("content"))
+            if tool_name == "set_memory":
+                output_text = self.memory_manager_instance.set_memory(args.get("title"), args.get("content"))
             elif tool_name == "delete_memory":
                 output_text = self.memory_manager_instance.delete_memory(args.get("title"))
             else:

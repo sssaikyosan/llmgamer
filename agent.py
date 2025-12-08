@@ -27,11 +27,11 @@ class GameAgent:
         self.mcp_manager = MCPManager()
         self.memory_manager = MemoryManager()
         self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.MODEL_NAME)
-        self.state = AgentState()
+        self.state = AgentState(max_history=Config.MAX_HISTORY)
         
         # Initialize memory with initial task if provided and empty
         if initial_task:
-             self.memory_manager.add_memory("Main Task", initial_task)
+             self.memory_manager.set_memory("Main Task", initial_task)
         
     async def initialize(self):
         """Initialize the agent and start the meta_manager server."""
@@ -126,7 +126,7 @@ class GameAgent:
         user_desc = json.dumps(tools_cat["user"], indent=2)
         
         # 1. System Prompt (Dynamic part of system instructions)
-        system_prompt = get_system_prompt(core_desc, user_desc, memory_str)
+        system_prompt = get_system_prompt(core_desc, user_desc, memory_str, max_history=self.state.max_history)
         
         # 2. User Turn Prompt
         user_prompt = get_user_turn_prompt(
@@ -135,7 +135,10 @@ class GameAgent:
         
         # Construct Messages for LLM
         # We prepend the system prompt as the first user message
-        messages_to_send = [{"role": "user", "content": system_prompt}] + self.state.messages
+        # Limit history to the last 'max_history' turns (user + assistant = 2 messages per turn)
+        history_limit = self.state.max_history * 2
+        recent_messages = self.state.messages[-history_limit:] if history_limit > 0 else self.state.messages
+        messages_to_send = [{"role": "user", "content": system_prompt}] + recent_messages
         
         # Current input images
         current_inputs = [current_img] if current_img else []

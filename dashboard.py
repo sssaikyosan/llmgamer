@@ -25,11 +25,16 @@ class DashboardState:
         self.thought: str = "Waiting for agent thought process..."
         self.memories: Dict[str, str] = {}
         self.tools: Dict[str, Any] = {}
-        self.logs: list = []
+        self.tool_log: str = "Waiting for tool execution..."
+        
+        # User Input Handling
+        self.waiting_for_input: bool = False
+        self.input_prompt: str = ""
+        self.last_user_input: Optional[str] = None
 
 state = DashboardState()
 
-def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None):
+def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None):
     if screenshot:
         state.screenshot_base64 = screenshot
     if thought:
@@ -38,6 +43,33 @@ def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=N
         state.memories = memories
     if tools:
         state.tools = tools
+    if tool_log:
+        state.tool_log = tool_log
+
+def request_user_input(prompt: str):
+    state.waiting_for_input = True
+    state.input_prompt = prompt
+    state.last_user_input = None # Reset previous input
+
+def get_submitted_input() -> Optional[str]:
+    if state.last_user_input is not None:
+        input_val = state.last_user_input
+        # Reset state after reading
+        state.waiting_for_input = False
+        state.input_prompt = ""
+        state.last_user_input = None
+        return input_val
+    return None
+
+from pydantic import BaseModel
+class UserInput(BaseModel):
+    text: str
+
+@app.post("/api/submit_input")
+async def submit_input(input_data: UserInput):
+    state.last_user_input = input_data.text
+    state.waiting_for_input = False
+    return {"status": "ok"}
 
 @app.get("/api/state")
 async def get_state():
@@ -45,7 +77,12 @@ async def get_state():
         "screenshot": state.screenshot_base64,
         "thought": state.thought,
         "memories": state.memories,
-        "tools": state.tools
+        "tools": state.tools,
+        "tool_log": state.tool_log,
+        
+        # Input State
+        "waiting_for_input": state.waiting_for_input,
+        "input_prompt": state.input_prompt
     }
 
 @app.get("/", response_class=HTMLResponse)
@@ -66,6 +103,7 @@ async def get_dashboard():
             --accent-color: #3b82f6; /* Blue-500 */
             --border-color: #27272a;
             --thought-color: #10b981; /* Emerald-500 */
+            --log-color: #f59e0b; /* Amber-500 */
             --header-text: #a1a1aa;
         }
         body {
@@ -75,8 +113,8 @@ async def get_dashboard():
             margin: 0;
             padding: 20px;
             display: grid;
-            grid-template-columns: 2fr 1fr;
-            grid-template-rows: auto 1fr;
+            grid-template-columns: 2.5fr 1fr;
+            grid-template-rows: 65vh 1fr;
             gap: 20px;
             height: 95vh;
             overflow: hidden;
@@ -89,6 +127,7 @@ async def get_dashboard():
             display: flex;
             flex-direction: column;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
         }
         h2 {
             margin-top: 0;
@@ -117,9 +156,7 @@ async def get_dashboard():
         #screen-panel {
             grid-column: 1 / 2;
             grid-row: 1 / 2;
-            min-height: 400px;
             position: relative;
-            overflow: hidden;
             background: #000;
             display: flex;
             justify-content: center;
@@ -132,46 +169,48 @@ async def get_dashboard():
             border-radius: 4px;
         }
         
+        /* Memory Panel */
+        #memory-panel {
+            grid-column: 2 / 3;
+            grid-row: 1 / 2;
+        }
+
         /* Thought Panel */
         #thought-panel {
             grid-column: 1 / 2;
             grid-row: 2 / 3;
-            overflow: hidden;
         }
-        #thought-content {
+        
+        /* Log Panel */
+        #log-panel {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
+        }
+
+        .content-area {
             font-family: 'JetBrains Mono', monospace;
             white-space: pre-wrap;
-            color: var(--thought-color);
-            background: #0e0e10; /* Slightly darker */
+            background: #0e0e10; 
             padding: 15px;
             border-radius: 6px;
             overflow-y: auto;
             flex: 1;
-            font-size: 0.9rem;
-            line-height: 1.5;
+            font-size: 0.95rem; /* Larger font */
+            line-height: 1.6;
             border: 1px solid #1f2937;
         }
 
-        /* Sidebar */
-        #sidebar {
-            grid-column: 2 / 3;
-            grid-row: 1 / 3;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            overflow: hidden;
-        }
-        .sidebar-section {
-            flex: 1;
-            overflow: hidden;
-        }
-        .scroll-area {
-            overflow-y: auto;
-            flex: 1;
-            padding-right: 5px;
+        #thought-content {
+            color: var(--thought-color);
         }
         
-        /* Lists */
+        #log-content {
+            color: var(--text-color); /* Default text color for logs */
+        }
+        
+        /* Specific styling for log parts if needed */
+
+        /* Lists for Memory */
         ul {
             list-style-type: none;
             padding: 0;
@@ -190,28 +229,6 @@ async def get_dashboard():
             color: var(--accent-color);
             display: block;
             margin-bottom: 4px;
-        }
-        .tool-category {
-            font-weight: 700;
-            margin-top: 20px;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            color: #71717a;
-            letter-spacing: 0.05em;
-            padding-left: 12px;
-        }
-        .tool-category:first-child {
-            margin-top: 0;
-        }
-        .tool-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .tool-name {
-            font-family: 'JetBrains Mono', monospace;
-            color: #d4d4d8;
         }
         
         /* Scrollbar */
@@ -233,8 +250,8 @@ async def get_dashboard():
         /* Connection Status */
         #status-indicator {
             position: absolute;
-            top: 20px;
-            right: 20px;
+            top: 15px;
+            left: 15px;
             width: 10px;
             height: 10px;
             border-radius: 50%;
@@ -247,35 +264,142 @@ async def get_dashboard():
             background-color: #22c55e; /* Green */
             box-shadow: 0 0 10px #22c55e;
         }
+        
+        /* Input Modal */
+        #input-modal {
+            display: none; /* Hidden by default */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        #input-modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 30px;
+            width: 500px;
+            max-width: 90%;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+        
+        .modal-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--text-color);
+        }
+        
+        #input-field {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-color);
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+        
+        #input-field:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+        
+        #submit-btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+        
+        #submit-btn:hover {
+            background-color: #2563eb; /* Blue-600 */
+        }
 
     </style>
 </head>
 <body>
-    <div id="status-indicator" title="Disconnected"></div>
+    
+    <!-- Input Modal -->
+    <div id="input-modal">
+        <div class="modal-content">
+            <div class="modal-title" id="modal-prompt">User Input Required</div>
+            <input type="text" id="input-field" placeholder="Type your input here..." autocomplete="off">
+            <button id="submit-btn">Submit</button>
+        </div>
+    </div>
 
+    <!-- Row 1: Screen & Memory -->
     <div id="screen-panel" class="panel">
-        <h2>Live Vision</h2>
+        <div id="status-indicator" title="Disconnected"></div>
         <img id="screen-img" src="" alt="Live Feed - Waiting for Agent...">
     </div>
     
-    <div id="thought-panel" class="panel">
-        <h2>Cognitive Stream</h2>
-        <div id="thought-content">Waiting for thoughts...</div>
+    <div id="memory-panel" class="panel">
+        <div class="content-area" id="memory-list" style="background: transparent; border: none; padding: 0;"></div>
     </div>
 
-    <div id="sidebar">
-        <div class="panel sidebar-section">
-            <h2>Active Memory</h2>
-            <div class="scroll-area" id="memory-list"></div>
-        </div>
-        <div class="panel sidebar-section">
-            <h2>Available Tools</h2>
-            <div class="scroll-area" id="tool-list"></div>
-        </div>
+    <!-- Row 2: Thought & Logs -->
+    <div id="thought-panel" class="panel">
+        <div id="thought-content" class="content-area">Waiting for thoughts...</div>
+    </div>
+    
+    <div id="log-panel" class="panel">
+        <div id="log-content" class="content-area">Waiting for tool execution...</div>
     </div>
 
     <script>
         const statusIndicator = document.getElementById('status-indicator');
+        const inputModal = document.getElementById('input-modal');
+        const modalPrompt = document.getElementById('modal-prompt');
+        const inputField = document.getElementById('input-field');
+        const submitBtn = document.getElementById('submit-btn');
+        
+        let isInputModalActive = false;
+        
+        // Submit handler
+        function submitInput() {
+            const val = inputField.value;
+            if (!val) return;
+            
+            fetch('/api/submit_input', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ text: val }),
+            })
+            .then(res => res.json())
+            .then(data => {
+                inputField.value = '';
+                inputModal.classList.remove('active');
+                isInputModalActive = false;
+            })
+            .catch(err => console.error('Error submitting input:', err));
+        }
+
+        submitBtn.addEventListener('click', submitInput);
+        inputField.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') submitInput();
+        });
         
         function updateState() {
             fetch('/api/state')
@@ -297,16 +421,23 @@ async def get_dashboard():
                     // Update Thought
                     if (data.thought) {
                         const thoughtEl = document.getElementById('thought-content');
-                        // Only update if changed to avoid unnecessary re-renders/scroll jumps (primitive check)
                         if (thoughtEl.getAttribute('data-last') !== data.thought) {
                              thoughtEl.textContent = data.thought;
                              thoughtEl.setAttribute('data-last', data.thought);
                              thoughtEl.scrollTop = thoughtEl.scrollHeight;
                         }
                     }
+                    
+                    // Update Tool Log
+                    if (data.tool_log) {
+                        const logEl = document.getElementById('log-content');
+                        if (logEl.innerText !== data.tool_log) {
+                             logEl.innerText = data.tool_log;
+                             logEl.scrollTop = logEl.scrollHeight;
+                        }
+                    }
 
                     // Update Memories
-                    // In a real app we'd diff this, but for now we rebuild
                     const memList = document.getElementById('memory-list');
                     if (data.memories) {
                          const fragment = document.createDocumentFragment();
@@ -322,41 +453,20 @@ async def get_dashboard():
                             }
                          }
                          fragment.appendChild(ul);
-                         
-                         // Rebuilding innerHTML every second is inefficient but fine for this scale
-                         // To prevent scroll jumping only update if needed - skipping complex diff for now
-                         // A simple hash or stringified compare would enable conditional update
-                         
                          memList.innerHTML = '';
                          memList.appendChild(fragment);
                     }
-
-                    // Update Tools
-                    const toolList = document.getElementById('tool-list');
-                    if (data.tools) {
-                        const fragment = document.createDocumentFragment();
-                        
-                        for (const [category, tools] of Object.entries(data.tools)) {
-                            if (tools.length === 0) continue;
-                            
-                            const catDiv = document.createElement('div');
-                            catDiv.className = 'tool-category';
-                            catDiv.textContent = category;
-                            fragment.appendChild(catDiv);
-                            
-                            const ul = document.createElement('ul');
-                            tools.forEach(tool => {
-                                const li = document.createElement('li');
-                                li.className = 'tool-item';
-                                li.innerHTML = `<span class="tool-name">${tool.name}</span>`;
-                                li.title = tool.description;
-                                ul.appendChild(li);
-                            });
-                            fragment.appendChild(ul);
-                        }
-                        
-                        toolList.innerHTML = '';
-                        toolList.appendChild(fragment);
+                    
+                    // Handle Input Request
+                    if (data.waiting_for_input && !isInputModalActive) {
+                        isInputModalActive = true;
+                        modalPrompt.textContent = data.input_prompt || "Input Required";
+                        inputModal.classList.add('active');
+                        inputField.focus();
+                    } else if (!data.waiting_for_input && isInputModalActive) {
+                        // Dismiss if no longer waiting (agent cancelled or handled)
+                        isInputModalActive = false;
+                        inputModal.classList.remove('active');
                     }
                 })
                 .catch(err => {
@@ -375,9 +485,8 @@ async def get_dashboard():
 
 def start_server():
     # Run uvicorn programmatically
-    # uvicorn.run(app, host="0.0.0.0", port=8000)
     # Using Config and Server instance to avoid some signal handling issues in threads
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="error")
+    config = uvicorn.Config(app, host="0.0.0.0", port=15000, log_level="error")
     server = uvicorn.Server(config)
     
     # We need to run this in a loop if we were async, but since we are threading a blocking call:
@@ -386,6 +495,6 @@ def start_server():
 def start_dashboard_thread():
     thread = threading.Thread(target=start_server, daemon=True)
     thread.start()
-    print("\n---------------------------------------------------------")
-    print(" >>> DASHBOARD RUNNING AT: http://localhost:8000 <<<")
-    print("---------------------------------------------------------\n")
+    print("\\n---------------------------------------------------------")
+    print(" >>> DASHBOARD RUNNING AT: http://localhost:15000 <<<")
+    print("---------------------------------------------------------\\n")

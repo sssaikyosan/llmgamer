@@ -39,12 +39,7 @@ class GameAgent:
         # Attach Memory Manager so MCPManager can route tools to it
         self.mcp_manager.attach_memory_manager(self.memory_manager)
 
-        # Start Dashboard
-        try:
-            start_dashboard_thread()
-        except Exception as e:
-            print(f"Failed to start dashboard: {e}")
-
+        # Dashboard is now started in __main__ to support initial input
         # Ensure meta_manager exists (virtual, so always True for now in revised logic)
         pass
 
@@ -91,6 +86,10 @@ class GameAgent:
                  output = str(result)
 
             print(f"Result: {output[:200]}..." if len(output) > 200 else f"Result: {output}")
+            
+            # Update Dashboard with tool log
+            update_dashboard_state(tool_log=f"Executed {server_name}.{tool_name}\nArgs: {args}\nResult: {output}")
+
             return output
         except Exception as e:
             error_msg = f"Error executing tool: {e}"
@@ -309,9 +308,28 @@ class GameAgent:
         finally:
             await self.shutdown()
 
+# Helper function to get input via dashboard (blocking)
+def get_user_input_via_dashboard(prompt: str) -> str:
+    from dashboard import request_user_input, get_submitted_input
+    
+    print(f"Waiting for user input via Dashboard: '{prompt}'")
+    request_user_input(prompt)
+    
+    while True:
+        val = get_submitted_input()
+        if val is not None:
+            return val
+        time.sleep(0.5)
+
 if __name__ == "__main__":
     import argparse
     
+    # Start Dashboard Thread EARLY so we can get input
+    try:
+        start_dashboard_thread()
+    except Exception as e:
+        print(f"Failed to start dashboard: {e}")
+
     parser = argparse.ArgumentParser(description="LLM Gamer Agent")
     parser.add_argument("task", nargs="?", help="The initial task for the agent to perform")
     parser.add_argument("--resume", action="store_true", help="Resume from the last checkpoint")
@@ -331,7 +349,8 @@ if __name__ == "__main__":
 
     if not initial_task and not should_resume:
         print("\n=== LLM Gamer Agent ===")
-        initial_task = input("Enter the task you want the agent to perform: ").strip()
+        # Replace CLI input with Dashboard Input
+        initial_task = get_user_input_via_dashboard("Enter the task you want the agent to perform:")
         if not initial_task:
             initial_task = "Play the game currently on screen."
     

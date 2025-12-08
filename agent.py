@@ -3,8 +3,6 @@ import os
 import sys
 import json
 import time
-import base64
-import datetime
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
@@ -14,7 +12,8 @@ from mcp_manager import MCPManager
 from task_manager import TaskManager
 from llm_client import LLMClient
 from utils.vision import capture_screenshot
-from prompts import construct_agent_prompt
+from prompts import get_system_prompt, get_user_turn_prompt
+from agent_state import AgentState
 
 # Load environment variables
 load_dotenv()
@@ -34,28 +33,22 @@ class GameAgent:
         self.mcp_manager = MCPManager()
         self.task_manager = TaskManager(initial_task)
         self.llm_client = LLMClient(provider=LLM_PROVIDER, model_name=MODEL_NAME)
-        self.history = []
-        self.screenshot_history = [] # Stores {"time": str, "img": PIL.Image}
+        self.state = AgentState()
         
     async def initialize(self):
         """Initialize the agent and start the meta_manager server."""
-        # Ensure meta_manager exists
-        if not os.path.exists(os.path.join("servers", "meta_manager.py")):
-             pass
+        # Ensure meta_manager exists (virtual, so always True for now in revised logic)
+        pass
 
-        # Start Meta Manager (No longer needed as separate server)
-        # self.meta_manager is now virtual inside mcp_manager
-
-
-        # Start Input Tools (for Basic Interactions)
-        if os.path.exists(os.path.join("servers", "input_tools.py")):
+        # Start Input Tools (for Basic Interactions) - Check workspace
+        if os.path.exists(os.path.join("workspace", "input_tools.py")):
              success, msg = await self.mcp_manager.start_server("input_tools")
              if success:
                  print("Input Tools Server started.")
              else:
-                 print(f"Warning: Failed to start input_tools: {msg}")
+                 print(f"Warning: Failed to start input_tools from workspace: {msg}")
             
-        print("Agent Initialized. LLM can now create its own tools.")
+        print("Agent Initialized. LLM can now create its own tools in workspace.")
 
     async def shutdown(self):
         await self.mcp_manager.shutdown_all()
@@ -95,66 +88,50 @@ class GameAgent:
     async def think(self, screenshot_base64: str, timestamp: float) -> Optional[Dict[str, Any]]:
         print("Thinking...")
         
-        # Get dynamic task context
-        task_context = self.task_manager.get_context_string()
-        
-        # Format history
-        history_str = "\n".join([f"- {h}" for h in self.history[-10:]]) # Last 10 actions
-        if not history_str:
-            history_str = "(No history yet)"
+        # Update State with new screenshot
+        current_img = self.state.add_screenshot(screenshot_base64, timestamp)
 
-        # Get categorized tools
+        # Get Contexts
+        task_context = self.task_manager.get_context_string()
+        current_time_str = self.state.get_current_time_str(timestamp)
+        
+        # Get categorized tools for System Prompt
         tools_cat = self.mcp_manager.get_tools_categorized()
         core_desc = json.dumps(tools_cat["core"], indent=2)
         user_desc = json.dumps(tools_cat["user"], indent=2)
         
-        # Prepare Visual Context
-        if timestamp > 0:
-            now = datetime.datetime.fromtimestamp(timestamp)
-        else:
-            now = datetime.datetime.now()
-            
-        current_timestamp_str = now.strftime("%H:%M:%S")
-        current_date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        # 1. System Prompt (Dynamic part of system instructions)
+        system_prompt = get_system_prompt(core_desc, user_desc)
         
-        inputs = []
-        visual_history_log = "(No visual history available)"
-        num_images = 0
-
-        if screenshot_base64:
-            image_data = base64.b64decode(screenshot_base64)
-            from PIL import Image
-            import io
-            img = Image.open(io.BytesIO(image_data))
-            
-            # Update History (Keep last 3) with timestamps
-            self.screenshot_history.append({"time": current_timestamp_str, "img": img})
-            if len(self.screenshot_history) > 3:
-                self.screenshot_history.pop(0)
-            
-            # Inputs: Extract just the images for Gemini
-            inputs = [item["img"] for item in self.screenshot_history]
-            num_images = len(inputs)
-            
-            # Create a log of timestamps for the prompt
-            visual_history_log = "\n".join(
-                [f"   - Image {i}: Captured at {item['time']} {'(CURRENT)' if i == len(self.screenshot_history)-1 else ''}" 
-                 for i, item in enumerate(self.screenshot_history)]
-            )
-        
-        # Construct Prompt
-        prompt = construct_agent_prompt(
-            current_time=current_date_str,
-            num_images=num_images,
-            visual_history_log=visual_history_log,
-            history_str=history_str,
-            core_desc=core_desc,
-            user_desc=user_desc,
+        # 2. User Turn Prompt
+        user_prompt = get_user_turn_prompt(
+            current_time=current_time_str,
             task_context=task_context
         )
         
+        # Construct Messages for LLM
+        # We prepend the system prompt as the first user message (or system message if supported)
+        # to ensure the LLM knows the current tools and rules.
+        messages_to_send = [{"role": "user", "content": system_prompt}] + self.state.messages
+        
+        # Current input images (only the latest one is strictly needed if history has them, 
+        # but let's pass the current one explicitly with the prompt)
+        current_inputs = [current_img] if current_img else []
+
         # Generate Response via LLMClient
-        return await self.llm_client.generate_response(prompt, inputs)
+        response = await self.llm_client.generate_response(user_prompt, current_inputs, messages=messages_to_send)
+        
+        if response:
+             # Add the User's turn to history (so it's available for next turn)
+             # Note: We store the 'user_prompt' and 'current_img' 
+             self.state.add_message("user", [user_prompt, current_img] if current_img else user_prompt)
+             
+             # Add the Model's response to history
+             # We store the raw response dict or a summary? 
+             # Storing the JSON string representation is safer for reproduction
+             self.state.add_message("assistant", json.dumps(response))
+             
+        return response
 
     async def run_loop(self):
         await self.initialize()
@@ -199,10 +176,11 @@ class GameAgent:
                         
                         # Execute the tool
                         result = await self.execute_tool(server, tool, args)
-                        self.history.append(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}")
                         
-
-
+                        # Add tool result to message history so the model sees it in the next turn
+                        self.state.add_message("user", f"Tool '{tool}' executed. Result: {str(result)[:500]}")
+                        self.state.add_history(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}") # Keep for logging/compatibility if needed
+                        
                     else:
                         print(f"Unknown action type: {action_type}")
                 else:

@@ -27,13 +27,10 @@ class ActiveServer:
 
 class MCPManager:
     def __init__(self):
-        self.core_dir = os.path.join(os.getcwd(), "servers")
         self.work_dir = os.path.join(os.getcwd(), "workspace")
         self.active_servers: Dict[str, ActiveServer] = {}
         self.python_exe = os.path.join(os.getcwd(), ".venv", "Scripts", "python.exe")
         
-        if not os.path.exists(self.core_dir):
-            os.makedirs(self.core_dir)
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
 
@@ -66,7 +63,7 @@ class MCPManager:
             },
             {
                 "name": "list_mcp_files",
-                "description": "List all available MCP server files in 'servers/' (Core) and 'workspace/' (Created).",
+                "description": "List all available MCP server files in 'workspace/'.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -172,13 +169,11 @@ class MCPManager:
         if name == "meta_manager":
             return True, "Meta Manager is a virtual server and is always active."
 
-        # Search in workspace first, then core
+        # Search in workspace only
         filepath = os.path.join(self.work_dir, f"{name}.py")
-        if not os.path.exists(filepath):
-            filepath = os.path.join(self.core_dir, f"{name}.py")
             
         if not os.path.exists(filepath):
-            msg = f"Server script not found: {name}.py (searched in workspace and servers)"
+            msg = f"Server script not found: {name}.py (searched in workspace)"
             print(msg)
             return False, msg
 
@@ -201,7 +196,7 @@ class MCPManager:
         # Create the ActiveServer entry partial structure (session added later)
         self.active_servers[name] = ActiveServer(
             name=name,
-            script_path=filepath, # This filepath is correctly resolved now
+            script_path=filepath, 
             session=None, # injected by loop
             tools=[],     # injected by loop
             process=None, # handled by stdio context
@@ -274,15 +269,7 @@ class MCPManager:
             print(msg)
             return msg
             
-        # Then check core (optional: maybe prevent deleting core?)
-        filepath = os.path.join(self.core_dir, f"{name}.py")
-        if os.path.exists(filepath):
-            os.remove(filepath)
-            msg = f"Deleted server file: {filepath}"
-            print(msg)
-            return msg
-            
-        return f"Error: Server file '{name}.py' not found in workspace or servers."
+        return f"Error: Server file '{name}.py' not found in workspace."
 
     async def call_tool(self, server_name: str, tool_name: str, args: dict) -> Any:
         """
@@ -340,9 +327,6 @@ class MCPManager:
 
             elif tool_name == "list_mcp_files":
                 output = []
-                if os.path.exists(self.core_dir):
-                    core_files = [f[:-3] for f in os.listdir(self.core_dir) if f.endswith(".py")]
-                    output.append(f"Core servers: {', '.join(core_files)}")
                 if os.path.exists(self.work_dir):
                     ws_files = [f[:-3] for f in os.listdir(self.work_dir) if f.endswith(".py")]
                     output.append(f"Workspace servers: {', '.join(ws_files) if ws_files else '(none)'}")
@@ -363,8 +347,6 @@ class MCPManager:
             elif tool_name == "read_mcp_code":
                 name = args.get("name")
                 filepath = os.path.join(self.work_dir, f"{name}.py")
-                if not os.path.exists(filepath):
-                    filepath = os.path.join(self.core_dir, f"{name}.py")
                 
                 if os.path.exists(filepath):
                     with open(filepath, "r", encoding="utf-8") as f:
@@ -411,8 +393,7 @@ class MCPManager:
 
     def get_tools_categorized(self) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Return tools separated by Core (servers/) and User (workspace/).
-        Meta tools are included in Core.
+        Return tools separated by Core (Meta Manager) and User (workspace/*).
         """
         core_tools = []
         user_tools = []
@@ -427,13 +408,7 @@ class MCPManager:
             })
 
         for server_name, server in self.active_servers.items():
-            # Normalize paths to be safe
-            server_path = os.path.normpath(server.script_path)
-            core_path = os.path.normpath(self.core_dir)
-            
-            # Check if it starts with the core directory path
-            is_core = server_path.startswith(core_path)
-            
+            # All running file-based servers are now considered User tools
             for tool in server.tools:
                 tool_dict = {
                     "server": server_name,
@@ -441,10 +416,7 @@ class MCPManager:
                     "description": tool.description,
                     "inputSchema": tool.inputSchema
                 }
-                if is_core:
-                    core_tools.append(tool_dict)
-                else:
-                    user_tools.append(tool_dict)
+                user_tools.append(tool_dict)
                     
         return {"core": core_tools, "user": user_tools}
 

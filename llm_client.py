@@ -35,13 +35,45 @@ class LLMClient:
         image.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    async def generate_response(self, prompt: str, images: List[Any] = []) -> Optional[Dict[str, Any]]:
+    async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Optional[Dict[str, Any]]:
         if self.provider == "gemini" and self.model:
             try:
-                # Prepare inputs: [prompt, image1, image2, ...]
-                inputs = [prompt] + images
-                response = self.model.generate_content(inputs)
-                return self._parse_response(response.text)
+                if messages:
+                    # Convert messages to Gemini history format
+                    # Expected format for history: [{'role': 'user'|'model', 'parts': [...]}, ...]
+                    history = []
+                    for msg in messages:
+                        role = "model" if msg["role"] == "assistant" else "user"
+                        content = msg["content"]
+                        parts = []
+                        if isinstance(content, str):
+                            parts.append(content)
+                        elif isinstance(content, list):
+                            # Handle mixed content (text + images) if stored in list
+                            for item in content:
+                                if isinstance(item, str):
+                                    parts.append(item)
+                                # Assuming PIL Image logic handles images separately or we need to process them here
+                                # If content has PIL images, we need to pass them directly.
+                                # Since we can't easily iterate and check types for everything without importing PIL, 
+                                # rely on genai's flexible input handling usually.
+                                else:
+                                    parts.append(item)
+                        history.append({"role": role, "parts": parts})
+                    
+                    chat = self.model.start_chat(history=history)
+                    
+                    # Current turn input
+                    inputs = [prompt] + images
+                    response = chat.send_message(inputs)
+                    return self._parse_response(response.text)
+                
+                else:
+                    # Legacy single turn mode
+                    # Prepare inputs: [prompt, image1, image2, ...]
+                    inputs = [prompt] + images
+                    response = self.model.generate_content(inputs)
+                    return self._parse_response(response.text)
             except Exception as e:
                 print(f"LLM Error: {e}")
                 import traceback

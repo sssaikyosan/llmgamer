@@ -11,6 +11,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from contextlib import AsyncExitStack
 
+# Dynamically imported to avoid circular imports usually, but we inject instance
+# from memory_manager import MemoryManager 
+
 @dataclass
 class ActiveServer:
     name: str
@@ -35,6 +38,51 @@ class MCPManager:
             os.makedirs(self.work_dir)
 
         self.meta_tools = self._init_meta_tools()
+        self.memory_manager_instance = None # To be attached
+        self.memory_tools = self._init_memory_tools()
+
+    def attach_memory_manager(self, memory_manager):
+        """Attach the agent's MemoryManager instance to expose its tools."""
+        self.memory_manager_instance = memory_manager
+
+    def _init_memory_tools(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "add_memory",
+                "description": "Add a new memory (instruction/knowledge) to the agent's persistent state. Use short, descriptive titles.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Short title for the memory."},
+                        "content": {"type": "string", "description": "The content of the memory/instruction."}
+                    },
+                    "required": ["title", "content"]
+                }
+            },
+            {
+                "name": "edit_memory",
+                "description": "Edit an existing memory by its title.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "The title of the memory to edit."},
+                        "content": {"type": "string", "description": "The new content."}
+                    },
+                    "required": ["title", "content"]
+                }
+            },
+            {
+                "name": "delete_memory",
+                "description": "Delete a memory by its title.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "The title of the memory to delete."}
+                    },
+                    "required": ["title"]
+                }
+            }
+        ]
 
     def _init_meta_tools(self) -> List[Dict[str, Any]]:
         return [
@@ -168,6 +216,8 @@ class MCPManager:
         # Virtual Meta Manager handling
         if name == "meta_manager":
             return True, "Meta Manager is a virtual server and is always active."
+        if name == "memory_manager":
+            return True, "Memory Manager is a virtual server and is always active."
 
         # Search in workspace only
         filepath = os.path.join(self.work_dir, f"{name}.py")
@@ -232,7 +282,7 @@ class MCPManager:
         """
         Stop an active MCP server.
         """
-        if name == "meta_manager":
+        if name == "meta_manager" or name == "memory_manager":
             return True # Cannot stop virtual server
 
         if name in self.active_servers:
@@ -256,8 +306,8 @@ class MCPManager:
         """
         Stop and delete the server file.
         """
-        if name == "meta_manager":
-            return "Error: Cannot delete the meta_manager server itself."
+        if name == "meta_manager" or name == "memory_manager":
+            return "Error: Cannot delete virtual servers."
 
         await self.stop_server(name)
         
@@ -278,6 +328,9 @@ class MCPManager:
         # Handle Virtual Meta Manager Tools
         if server_name == "meta_manager":
             return await self._call_meta_tool(tool_name, args)
+        
+        if server_name == "memory_manager":
+            return await self._call_memory_tool(tool_name, args)
 
         if server_name not in self.active_servers:
             raise ValueError(f"Server {server_name} is not active.")
@@ -289,12 +342,34 @@ class MCPManager:
         result = await server.session.call_tool(tool_name, args)
         return result
 
+    async def _call_memory_tool(self, tool_name: str, args: dict) -> Any:
+        @dataclass
+        class MockTextContent:
+            text: str
+        @dataclass
+        class MockResult:
+            content: List[MockTextContent]
+
+        if not self.memory_manager_instance:
+             return MockResult(content=[MockTextContent(text="Error: Memory Manager not attached.")])
+
+        output_text = ""
+        try:
+            if tool_name == "add_memory":
+                output_text = self.memory_manager_instance.add_memory(args.get("title"), args.get("content"))
+            elif tool_name == "edit_memory":
+                output_text = self.memory_manager_instance.edit_memory(args.get("title"), args.get("content"))
+            elif tool_name == "delete_memory":
+                output_text = self.memory_manager_instance.delete_memory(args.get("title"))
+            else:
+                 output_text = f"Error: Unknown memory tool '{tool_name}'"
+        except Exception as e:
+            output_text = f"Error executing memory tool: {e}"
+        
+        return MockResult(content=[MockTextContent(text=output_text)])
+
     async def _call_meta_tool(self, tool_name: str, args: dict) -> Any:
-        # Compatibility wrapper for tool results to match MCP SDK structure if needed,
-        # but for now we return simple strings or objects that LLMClient can handle.
-        # Actually LLMClient expects an object with .content[0].text if it comes from MCP,
-        # so we might need to mock that structure or adjust LLMClient/Agent.
-        # For simplicity, let's return a Mock object that looks like MCP result.
+        # Compatibility wrapper for tool results to match MCP SDK structure
         
         @dataclass
         class MockTextContent:
@@ -379,6 +454,17 @@ class MCPManager:
                 "description": tool["description"],
                 "inputSchema": tool["inputSchema"]
             })
+            
+        # Add Memory Tools (if active) - Actually they are always available as "virtual"
+        # but the agent needs to attach the manager first. We assume it will.
+        if self.memory_manager_instance:
+             for tool in self.memory_tools:
+                all_tools.append({
+                    "server": "memory_manager",
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "inputSchema": tool["inputSchema"]
+                })
 
         # Add Active Server Tools
         for server_name, server in self.active_servers.items():
@@ -393,7 +479,7 @@ class MCPManager:
 
     def get_tools_categorized(self) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Return tools separated by Core (Meta Manager) and User (workspace/*).
+        Return tools separated by Core (Meta Manager, Memory Manager) and User (workspace/*).
         """
         core_tools = []
         user_tools = []
@@ -406,6 +492,16 @@ class MCPManager:
                 "description": tool["description"],
                 "inputSchema": tool["inputSchema"]
             })
+            
+        # Add Memory Tools to Core
+        if self.memory_manager_instance:
+             for tool in self.memory_tools:
+                core_tools.append({
+                    "server": "memory_manager",
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "inputSchema": tool["inputSchema"]
+                })
 
         for server_name, server in self.active_servers.items():
             # All running file-based servers are now considered User tools

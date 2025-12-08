@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from mcp_manager import MCPManager
-from task_manager import TaskManager
+from memory_manager import MemoryManager
 from llm_client import LLMClient
 from utils.vision import capture_screenshot
 from prompts import get_system_prompt, get_user_turn_prompt
@@ -31,12 +31,19 @@ else:
 class GameAgent:
     def __init__(self, initial_task: str = "Play the game"):
         self.mcp_manager = MCPManager()
-        self.task_manager = TaskManager(initial_task)
+        self.memory_manager = MemoryManager()
         self.llm_client = LLMClient(provider=LLM_PROVIDER, model_name=MODEL_NAME)
         self.state = AgentState()
         
+        # Initialize memory with initial task if provided and empty
+        if initial_task:
+             self.memory_manager.add_memory("Main Task", initial_task)
+        
     async def initialize(self):
         """Initialize the agent and start the meta_manager server."""
+        # Attach Memory Manager so MCPManager can route tools to it
+        self.mcp_manager.attach_memory_manager(self.memory_manager)
+
         # Ensure meta_manager exists (virtual, so always True for now in revised logic)
         pass
 
@@ -60,7 +67,12 @@ class GameAgent:
         print(f"Executing: {server_name}.{tool_name} with {args}")
         try:
             result = await self.mcp_manager.call_tool(server_name, tool_name, args)
-            output = result.content[0].text
+            # Handle result content structure properly if it's the specific object or string
+            if hasattr(result, 'content') and isinstance(result.content, list) and len(result.content) > 0:
+                 output = result.content[0].text
+            else:
+                 output = str(result)
+
             print(f"Result: {output[:200]}..." if len(output) > 200 else f"Result: {output}")
             return output
         except Exception as e:
@@ -100,7 +112,14 @@ class GameAgent:
             current_img = Image.open(io.BytesIO(image_data))
 
         # Get Contexts
-        task_context = self.task_manager.get_context_string()
+        mem_lines = []
+        if self.memory_manager.memories:
+            for title, content in self.memory_manager.memories.items():
+                mem_lines.append(f"- {title}: {content}")
+            memory_str = "\n".join(mem_lines)
+        else:
+            memory_str = "(No active memories)"
+
         current_time_str = self.state.get_current_time_str(timestamp)
         
         # Get categorized tools for System Prompt
@@ -109,12 +128,11 @@ class GameAgent:
         user_desc = json.dumps(tools_cat["user"], indent=2)
         
         # 1. System Prompt (Dynamic part of system instructions)
-        system_prompt = get_system_prompt(core_desc, user_desc)
+        system_prompt = get_system_prompt(core_desc, user_desc, memory_str)
         
         # 2. User Turn Prompt
         user_prompt = get_user_turn_prompt(
-            current_time=current_time_str,
-            task_context=task_context
+            current_time=current_time_str
         )
         
         # Construct Messages for LLM
@@ -140,7 +158,7 @@ class GameAgent:
         """Save the current state of the agent to a file."""
         print(f"Saving checkpoint to {filename}...")
         data = {
-            "task_manager": self.task_manager.to_dict(),
+            "memory_manager": self.memory_manager.memories,
             "agent_state": self.state.to_dict(),
             "active_mcp_servers": self.mcp_manager.get_active_server_names(),
             "timestamp": time.time()
@@ -163,9 +181,9 @@ class GameAgent:
             with open(filename, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Restore TaskManager
-            if "task_manager" in data:
-                self.task_manager.from_dict(data["task_manager"])
+            # Restore MemoryManager
+            if "memory_manager" in data and isinstance(data["memory_manager"], dict):
+                self.memory_manager.memories = data["memory_manager"]
             
             # Restore AgentState
             if "agent_state" in data:
@@ -216,23 +234,6 @@ class GameAgent:
                     action_type = decision.get("action_type")
                     print(f"Thought: {thought}")
                     
-                    # Handle Task Updates
-                    task_update = decision.get("task_update")
-                    if task_update:
-                        update_type = task_update.get("type")
-                        content = task_update.get("content")
-                        t_id = task_update.get("id")
-                        
-                        if update_type == "ADD_SUBTASK" and content:
-                            msg = self.task_manager.add_subtask(content)
-                            print(f"[Task Manager] {msg}")
-                        elif update_type == "COMPLETE_SUBTASK" and t_id:
-                            msg = self.task_manager.complete_subtask(t_id)
-                            print(f"[Task Manager] {msg}")
-                        elif update_type == "UPDATE_MAIN_TASK" and content:
-                            msg = self.task_manager.update_main_task(content)
-                            print(f"[Task Manager] {msg}")
-
                     # Handle Actions
                     if action_type == "CALL_TOOL":
                         server = decision.get("server_name")
@@ -247,7 +248,8 @@ class GameAgent:
                         self.state.add_history(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}") # Keep for logging/compatibility if needed
                         
                     else:
-                        print(f"Unknown action type: {action_type}")
+                        pass
+                        # Removed task update logic
                         
                 else:
                     print("No decision made.")
@@ -256,6 +258,8 @@ class GameAgent:
                 self.save_checkpoint()
                 
                 time.sleep(2)
+
+                        
                 
         except KeyboardInterrupt:
             print("Stopping agent...")

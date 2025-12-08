@@ -21,39 +21,43 @@ class Config:
     _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
     _LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
     
-    # Resolve MODEL_NAME statically for easy access
-    if LLM_PROVIDER == "gemini":
-        MODEL_NAME = _GEMINI_MODEL
-    elif LLM_PROVIDER == "lmstudio":
-        MODEL_NAME = _LM_STUDIO_MODEL
-    else:
+    @classmethod
+    def get_model_name(cls) -> str:
+        """動的にモデル名を取得。LLM_PROVIDERに基づいて適切なモデルを返す。"""
+        if cls.LLM_PROVIDER == "gemini":
+            return cls._GEMINI_MODEL
+        elif cls.LLM_PROVIDER == "lmstudio":
+            return cls._LM_STUDIO_MODEL
         # Fallback for unknown providers
-        MODEL_NAME = _GEMINI_MODEL
+        return cls._GEMINI_MODEL
+    
+    # 後方互換性のためのプロパティ（非推奨）
+    MODEL_NAME = _GEMINI_MODEL  # デフォルト値、get_model_name()の使用を推奨
     
     # MCP サーバーで使用可能なライブラリリスト
     # 標準ライブラリ (time, re, json, ctypes等) は常に使用可能
-    # 以下はサードパーティライブラリ
+    # 以下はサードパーティライブラリ (pip名: import名)
     ALLOWED_LIBRARIES = [
         # === 画面キャプチャ ===
-        "mss",           # 高速スクリーンキャプチャ
+        "mss",           # 高速スクリーンキャプチャ (import mss)
         
         # === 入力操作 ===
-        "pyautogui",     # マウス・キーボード操作
-        "pydirectinput", # DirectInput操作（ゲーム向け）
+        "pyautogui",     # マウス・キーボード操作 (import pyautogui)
+        "pydirectinput", # DirectInput操作（ゲーム向け） (import pydirectinput)
         
         # === 画像処理 ===
-        "pillow",        # 画像処理 (PIL)
-        "cv2",           # OpenCV（テンプレートマッチング等）
-        "numpy",         # 数値計算（cv2と併用）
+        "pillow",        # 画像処理 (pip: pillow → import PIL)
+        "cv2",           # OpenCV (pip: opencv-python → import cv2)
+        "numpy",         # 数値計算 (import numpy)
         
         # === OCR ===
-        "easyocr",       # OCR文字認識
+        "easyocr",       # OCR文字認識 (import easyocr)
         
         # === ウィンドウ・システム ===
-        "pygetwindow",   # ウィンドウ操作
-        "psutil",        # システム情報・プロセス監視
-        "pyperclip",     # クリップボード操作
+        "pygetwindow",   # ウィンドウ操作 (import pygetwindow)
+        "psutil",        # システム情報・プロセス監視 (import psutil)
+        "pyperclip",     # クリップボード操作 (import pyperclip)
         
         # === Windows専用 ===
-        "pywin32",       # Windows API (win32gui, win32api等)
+        "pywin32",       # Windows API (pip: pywin32 → import win32gui, win32api, etc.)
     ]

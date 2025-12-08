@@ -3,13 +3,15 @@ import os
 import sys
 import json
 import time
-import shutil
 import traceback
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from contextlib import AsyncExitStack
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # Dynamically imported to avoid circular imports usually, but we inject instance
 # from memory_manager import MemoryManager 
@@ -148,7 +150,7 @@ class MCPManager:
         
         # Basic validation to ensure it imports mcp
         if "import mcp" not in code and "from mcp" not in code:
-            print(f"WARNING: MCP server '{name}' does not appear to import mcp. It may not function correctly.")
+            logger.warning(f"MCP server '{name}' does not appear to import mcp. It may not function correctly.")
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(code)
@@ -178,7 +180,7 @@ class MCPManager:
                     if not init_future.done():
                         init_future.set_result(True)
                     
-                    print(f"Server {name} connected and running.")
+                    logger.info(f"Server {name} connected and running.")
                     
                     # Wait until we are told to stop
                     if name in self.active_servers:
@@ -189,14 +191,14 @@ class MCPManager:
             if not init_future.done():
                 init_future.set_exception(e)
             else:
-                print(f"Server {name} crashed or disconnected: {e}")
+                logger.error(f"Server {name} crashed or disconnected: {e}")
         finally:
             # Cleanup: remove from active servers when lifecycle ends
             if name in self.active_servers:
-                print(f"Server {name} lifecycle ended. Removing from active servers.")
+                logger.debug(f"Server {name} lifecycle ended. Removing from active servers.")
                 del self.active_servers[name]
 
-    async def start_server(self, name: str) -> bool:
+    async def start_server(self, name: str) -> tuple[bool, str]:
         """
         Start an MCP server and connect to it.
         Returns (success, message).
@@ -212,15 +214,15 @@ class MCPManager:
             
         if not os.path.exists(filepath):
             msg = f"Server script not found: {name}.py (searched in workspace)"
-            print(msg)
+            logger.warning(msg)
             return False, msg
 
         if name in self.active_servers:
             msg = f"Server {name} is already running."
-            print(msg)
+            logger.debug(msg)
             return True, msg
 
-        print(f"Starting MCP Server: {name}...")
+        logger.info(f"Starting MCP Server: {name}...")
         
         server_params = StdioServerParameters(
             command=self.python_exe,
@@ -260,7 +262,7 @@ class MCPManager:
             # Capture full traceback to debug TaskGroup/async errors
             error_details = traceback.format_exc()
             msg = f"Failed to start server {name}:\nError: {e}\nTraceback:\n{error_details}"
-            print(msg)
+            logger.error(msg)
             # Cleanup failed entry
             if name in self.active_servers:
                 del self.active_servers[name]
@@ -275,7 +277,7 @@ class MCPManager:
 
         if name in self.active_servers:
             server = self.active_servers[name]
-            print(f"Stopping server: {name}")
+            logger.info(f"Stopping server: {name}")
             
             # Signal the lifecycle loop to exit
             if hasattr(server, 'stop_event'):
@@ -304,7 +306,7 @@ class MCPManager:
         if os.path.exists(filepath):
             os.remove(filepath)
             msg = f"Deleted server file: {filepath}"
-            print(msg)
+            logger.info(msg)
             return msg
             
         return f"Error: Server file '{name}.py' not found in workspace."
@@ -505,7 +507,7 @@ class MCPManager:
         for name, server in self.active_servers.items():
             idle_time = now - server.last_used
             if idle_time > max_idle_seconds:
-                print(f"Server {name} has been idle for {idle_time:.0f}s. Stopping.")
+                logger.info(f"Server {name} has been idle for {idle_time:.0f}s. Stopping.")
                 to_remove.append(name)
         
         for name in to_remove:

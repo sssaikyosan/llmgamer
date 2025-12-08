@@ -1,8 +1,11 @@
-import os
+
 import re
 import json
 from config import Config
 from typing import List, Dict, Any, Optional
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class LLMError(Exception):
@@ -17,7 +20,7 @@ class LLMClient:
         self.model_name = model_name
         
         if not self.api_key:
-            print("WARNING: No API_KEY found.")
+            logger.warning("No API_KEY found.")
             
         if self.provider == "gemini":
             self.model = None
@@ -25,18 +28,18 @@ class LLMClient:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel(self.model_name)
-                print(f"LLM Client initialized for Gemini model: {self.model_name}")
+                logger.info(f"LLM Client initialized for Gemini model: {self.model_name}")
             except ImportError:
-                print("CRITICAL ERROR: google-generativeai package not installed.")
-                print("Please run: pip install google-generativeai")
+                logger.critical("google-generativeai package not installed.")
+                logger.critical("Please run: pip install google-generativeai")
             except Exception as e:
-                print(f"CRITICAL ERROR: Failed to initialize Gemini model: {e}")
+                logger.critical(f"Failed to initialize Gemini model: {e}")
             
             if self.model is None:
-                print("WARNING: Gemini model is not available. LLM calls will fail.")
+                logger.warning("Gemini model is not available. LLM calls will fail.")
         elif self.provider == "lmstudio":
             self.base_url = Config.LMSTUDIO_BASE_URL
-            print(f"LLM Client initialized for LM Studio at {self.base_url}")
+            logger.info(f"LLM Client initialized for LM Studio at {self.base_url}")
 
     def _pil_to_base64(self, image) -> str:
         import io
@@ -152,7 +155,7 @@ class LLMClient:
                 # Debug payload (without massive image data)
                 debug_payload = payload.copy()
                 debug_payload["messages"] = [{"role": "user", "content": "..."}] # Hide content for log
-                print(f"Sending request to LM Studio ({self.base_url}). Model: {use_model}")
+                logger.debug(f"Sending request to LM Studio ({self.base_url}). Model: {use_model}")
                 
                 headers = {"Content-Type": "application/json"}
                 
@@ -206,6 +209,6 @@ class LLMClient:
                     if thought:
                         data["_thought"] = thought
                     return data
-                except:
+                except json.JSONDecodeError:
                     pass
             raise LLMError(f"JSONパースエラー: {e}\nレスポンス: {text[:500]}")

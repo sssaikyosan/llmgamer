@@ -3,13 +3,18 @@ import datetime
 
 class AgentState:
     def __init__(self, max_history: int = 10):
-        self.history: List[str] = []
-        self.messages: List[Dict[str, Any]] = [] # Structural chat history
+        # NOTE: self.history は現在未使用。チェックポイント互換性のため保持。
+        # 将来のバージョンで削除予定。
+        self.history: List[str] = []  # DEPRECATED
+        self.messages: List[Dict[str, Any]] = []  # Structural chat history
         self.max_history = max_history
-        self.variables: Dict[str, Any] = {} # General purpose storage for agent variables
+        self.variables: Dict[str, Any] = {}  # General purpose storage for agent variables
 
     def add_history(self, action_result: str):
-        """Adds an action result to the text history."""
+        """Adds an action result to the text history.
+        
+        DEPRECATED: This method is not currently used. Kept for checkpoint compatibility.
+        """
         self.history.append(action_result)
 
     def add_message(self, role: str, content: Any):
@@ -37,7 +42,10 @@ class AgentState:
         self.messages.append({"role": role, "content": serializable_content})
 
     def get_history_string(self) -> str:
-        """Returns the formatted history string for the prompt."""
+        """Returns the formatted history string for the prompt.
+        
+        DEPRECATED: This method is not currently used. Kept for checkpoint compatibility.
+        """
         recent_history = self.history[-self.max_history:]
         if not recent_history:
             return "(No history yet)"

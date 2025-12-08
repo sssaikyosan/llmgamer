@@ -2,6 +2,15 @@ import base64
 import time
 import mss
 import mss.tools
+import sys
+import os
+
+# Add parent directory to path for logger import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def capture_screenshot() -> tuple[str, float]:
     """
@@ -18,6 +27,5 @@ def capture_screenshot() -> tuple[str, float]:
             
             return (img_str, time.time())
     except Exception as e:
-        print(f"Error taking screenshot: {e}")
+        logger.error(f"Error taking screenshot: {e}")
         return ("", 0.0)
-

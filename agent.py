@@ -19,8 +19,11 @@ from prompts import get_system_prompt, get_user_turn_prompt
 from agent_state import AgentState
 
 from config import Config
+from logger import get_logger
 
 from dashboard import start_dashboard_thread, update_dashboard_state
+
+logger = get_logger(__name__)
 
 # Configuration
 # LLM Provider and Model are now loaded from Config
@@ -30,7 +33,7 @@ class GameAgent:
         self.mcp_manager = MCPManager()
         self.memory_manager = MemoryManager()
         # Removed duplicate init lines
-        self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.MODEL_NAME)
+        self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.get_model_name())
         self.state = AgentState(max_history=Config.MAX_HISTORY)
         
         # Initialize memory with initial task if provided and empty
@@ -52,11 +55,11 @@ class GameAgent:
                     server_name = filename[:-3]
                     success, msg = await self.mcp_manager.start_server(server_name)
                     if success:
-                        print(f"Started server: {server_name}")
+                        logger.info(f"Started server: {server_name}")
                     else:
-                        print(f"Warning: Failed to start server {server_name}: {msg}")
+                        logger.warning(f"Failed to start server {server_name}: {msg}")
         
-        print("Agent Initialized. All discovered tools are running.")
+        logger.info("Agent Initialized. All discovered tools are running.")
         
         # Initial Dashboard Update
         update_dashboard_state(
@@ -71,7 +74,7 @@ class GameAgent:
         return capture_screenshot()
 
     async def execute_tool(self, server_name: str, tool_name: str, args: Dict[str, Any]):
-        print(f"Executing: {server_name}.{tool_name} with {args}")
+        logger.debug(f"Executing: {server_name}.{tool_name} with {args}")
         try:
             result = await self.mcp_manager.call_tool(server_name, tool_name, args)
             
@@ -86,7 +89,7 @@ class GameAgent:
             else:
                  output = str(result)
 
-            print(f"Result: {output[:200]}..." if len(output) > 200 else f"Result: {output}")
+            logger.debug(f"Result: {output[:200]}..." if len(output) > 200 else f"Result: {output}")
             
             # Update Dashboard with tool log
             update_dashboard_state(tool_log=f"Executed {server_name}.{tool_name}\nArgs: {args}\nResult: {output}")
@@ -94,11 +97,11 @@ class GameAgent:
             return output
         except Exception as e:
             error_msg = f"Error executing tool: {e}"
-            print(error_msg)
+            logger.error(error_msg)
             return error_msg
 
     async def think(self, screenshot_base64: str, timestamp: float) -> Optional[Dict[str, Any]]:
-        print("Thinking...")
+        logger.debug("Thinking...")
         
         # Decode screenshot for current turn usage - convert base64 to PIL Image
         current_img = None
@@ -177,17 +180,17 @@ class GameAgent:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             # print("Checkpoint saved.")
         except Exception as e:
-            print(f"Failed to save checkpoint: {e}")
+            logger.error(f"Failed to save checkpoint: {e}")
 
     async def load_checkpoint(self, filename: str = "agent_checkpoint.json"):
         """Load agent state from a file in the history directory."""
         history_dir = "history"
         filepath = os.path.join(history_dir, filename)
         
-        print(f"Loading checkpoint from {filepath}...")
+        logger.info(f"Loading checkpoint from {filepath}...")
         try:
             if not os.path.exists(filepath):
-                print("Checkpoint file not found.")
+                logger.warning("Checkpoint file not found.")
                 return False
 
             with open(filepath, "r", encoding="utf-8") as f:
@@ -204,10 +207,10 @@ class GameAgent:
 
 
 
-            print("Checkpoint loaded successfully.")
+            logger.info("Checkpoint loaded successfully.")
             return True
         except Exception as e:
-            print(f"Failed to load checkpoint: {e}")
+            logger.error(f"Failed to load checkpoint: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -217,15 +220,15 @@ class GameAgent:
         
         if resume:
             if await self.load_checkpoint():
-                print("Resumed from checkpoint.")
+                logger.info("Resumed from checkpoint.")
             else:
-                print("Could not resume. Starting fresh.")
+                logger.warning("Could not resume. Starting fresh.")
         
         # No screenshot cleanup needed anymore
         
         try:
             while True:
-                print("\n--- New Turn ---")
+                logger.info("--- New Turn ---")
                 
                 await self.mcp_manager.cleanup_unused_servers()
 
@@ -239,7 +242,7 @@ class GameAgent:
                 if decision:
                     thought = decision.get("_thought", decision.get("thought", "No thought"))
                     action_type = decision.get("action_type")
-                    print(f"Thought: {thought}")
+                    logger.info(f"Thought: {thought}")
                     
                     # Update Dashboard with thought and memories (in case memories changed during think? unlikely but persistent)
                     # Also update memories if any tool changed them (detected via memory_manager check below or blindly update)
@@ -267,7 +270,7 @@ class GameAgent:
                         )
                     # WAIT action or other non-tool actions - no processing needed
                 else:
-                    print("No decision made.")
+                    logger.warning("No decision made.")
 
                 
                 # Save checkpoint after every turn (regardless of decision)
@@ -278,12 +281,11 @@ class GameAgent:
                         
                 
         except KeyboardInterrupt:
-            print("Stopping agent...")
+            logger.info("Stopping agent...")
             self.save_checkpoint() # Save on exit too
         except LLMError as e:
-            print(f"\n=== LLM Error - Agent Stopped ===")
-            print(f"Error: {e}")
-            print("エージェントを停止します。")
+            logger.error(f"LLM Error - Agent Stopped: {e}")
+            logger.error("エージェントを停止します。")
             self.save_checkpoint()
         finally:
             await self.shutdown()
@@ -292,7 +294,7 @@ class GameAgent:
 def get_user_input_via_dashboard(prompt: str) -> str:
     from dashboard import request_user_input, get_submitted_input
     
-    print(f"Waiting for user input via Dashboard: '{prompt}'")
+    logger.debug(f"Waiting for user input via Dashboard: '{prompt}'")
     request_user_input(prompt)
     
     while True:
@@ -308,7 +310,7 @@ if __name__ == "__main__":
     try:
         start_dashboard_thread()
     except Exception as e:
-        print(f"Failed to start dashboard: {e}")
+        logger.error(f"Failed to start dashboard: {e}")
 
     parser = argparse.ArgumentParser(description="LLM Gamer Agent")
     parser.add_argument("task", nargs="?", help="The initial task for the agent to perform")
@@ -328,7 +330,7 @@ if __name__ == "__main__":
     should_resume = args.resume or (not initial_task and has_checkpoint)
 
     if not initial_task and not should_resume:
-        print("\n=== LLM Gamer Agent ===")
+        logger.info("=== LLM Gamer Agent ===")
         # Replace CLI input with Dashboard Input
         initial_task = get_user_input_via_dashboard("Enter the task you want the agent to perform:")
         if not initial_task:
@@ -337,7 +339,7 @@ if __name__ == "__main__":
     # If resuming, initial_task arg is ignored during load, but if load fails, it uses it?
     # TaskManager init happens in __init__, so we init with something then overwrite on load.
     
-    print(f"\nStarting agent...\n")
+    logger.info("Starting agent...")
     
     agent = GameAgent(initial_task=initial_task if initial_task else "Resume Task")
     asyncio.run(agent.run_loop(resume=should_resume))

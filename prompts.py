@@ -31,7 +31,7 @@ The following memories are persistent and can be modified using 'memory_manager'
 1. Visuals: Analyze image history provided in user messages to verify actions and detect changes.
 2. Workspace: All new files/tools must be in 'workspace/'.
 3. Restrictions: NO terminal commands. NO installing new libraries.
-4. Libraries: Use ONLY Python standard libs + {{{{{libraries_str}}}}}.
+4. Libraries: Use ONLY Python standard libs + [{libraries_str}].
 
 [MCP CREATION & EDITING RULES]
 When creating or editing tools via 'create_mcp_server' or 'edit_mcp_server', you MUST adhere to these technical standards:

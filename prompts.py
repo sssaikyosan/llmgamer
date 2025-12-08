@@ -1,4 +1,9 @@
+from config import Config
+
 def get_system_prompt(core_desc: str, user_desc: str, memory_str: str, max_history: int = 10) -> str:
+    # 使用可能なライブラリを文字列に変換
+    libraries_str = ", ".join(Config.ALLOWED_LIBRARIES)
+    
     return f"""
 You are an advanced AI Game Agent.
 
@@ -26,7 +31,7 @@ The following memories are persistent and can be modified using 'memory_manager'
 1. Visuals: Analyze image history provided in user messages to verify actions and detect changes.
 2. Workspace: All new files/tools must be in 'workspace/'.
 3. Restrictions: NO terminal commands. NO installing new libraries.
-4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time, easyocr}}.
+4. Libraries: Use ONLY Python standard libs + {{{{{libraries_str}}}}}.
 
 [MCP CREATION & EDITING RULES]
 When creating or editing tools via 'create_mcp_server' or 'edit_mcp_server', you MUST adhere to these technical standards:

@@ -28,6 +28,15 @@ class ActiveServer:
     created_at: float = field(default_factory=time.time)
     stop_event: asyncio.Event = None
 
+# Mock classes for virtual tool results (matching MCP SDK structure)
+@dataclass
+class MockTextContent:
+    text: str
+
+@dataclass
+class MockResult:
+    content: List['MockTextContent']
+
 class MCPManager:
     def __init__(self):
         self.work_dir = os.path.join(os.getcwd(), "workspace")
@@ -139,7 +148,7 @@ class MCPManager:
         
         # Basic validation to ensure it imports mcp
         if "import mcp" not in code and "from mcp" not in code:
-             pass 
+            print(f"WARNING: MCP server '{name}' does not appear to import mcp. It may not function correctly.")
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(code)
@@ -182,9 +191,10 @@ class MCPManager:
             else:
                 print(f"Server {name} crashed or disconnected: {e}")
         finally:
-            # Cleanup is automatic via context managers
+            # Cleanup: remove from active servers when lifecycle ends
             if name in self.active_servers:
-                print(f"Server {name} lifecycle ended.")
+                print(f"Server {name} lifecycle ended. Removing from active servers.")
+                del self.active_servers[name]
 
     async def start_server(self, name: str) -> bool:
         """
@@ -321,13 +331,6 @@ class MCPManager:
         return result
 
     async def _call_memory_tool(self, tool_name: str, args: dict) -> Any:
-        @dataclass
-        class MockTextContent:
-            text: str
-        @dataclass
-        class MockResult:
-            content: List[MockTextContent]
-
         if not self.memory_manager_instance:
              return MockResult(content=[MockTextContent(text="Error: Memory Manager not attached.")])
 
@@ -345,15 +348,7 @@ class MCPManager:
         return MockResult(content=[MockTextContent(text=output_text)])
 
     async def _call_meta_tool(self, tool_name: str, args: dict) -> Any:
-        # Compatibility wrapper for tool results to match MCP SDK structure
-        
-        @dataclass
-        class MockTextContent:
-            text: str
-        @dataclass
-        class MockResult:
-            content: List[MockTextContent]
-
+        """Compatibility wrapper for tool results to match MCP SDK structure."""
         output_text = ""
         
         try:

@@ -1,46 +1,14 @@
 import os
 import re
 import json
-import time
-from collections import deque
 from config import Config
 from typing import List, Dict, Any, Optional
 
-class RateLimiter:
-    def __init__(self, rpm: int, rpd: int):
-        self.rpm = rpm
-        self.rpd = rpd
-        self.requests_min = deque()
-        self.requests_day = deque()
 
-    def wait_for_slot(self):
-        current_time = time.time()
-        
-        # Clean up old timestamps
-        while self.requests_min and current_time - self.requests_min[0] > 60:
-            self.requests_min.popleft()
-        while self.requests_day and current_time - self.requests_day[0] > 86400:
-            self.requests_day.popleft()
-            
-        # Check limits
-        if len(self.requests_min) >= self.rpm:
-            sleep_time = 60 - (current_time - self.requests_min[0]) + 1
-            if sleep_time > 0:
-                print(f"Rate limit (RPM) reached. Sleeping for {sleep_time:.2f}s...")
-                time.sleep(sleep_time)
-                # Re-check/Reset time after sleep
-                self.wait_for_slot()
-                return
+class LLMError(Exception):
+    """LLM関連のエラーを示す例外クラス"""
+    pass
 
-        if len(self.requests_day) >= self.rpd:
-            print("Rate limit (RPD) reached. Waiting...")
-            time.sleep(60) 
-            self.wait_for_slot()
-            return
-            
-        # Add current request
-        self.requests_min.append(time.time())
-        self.requests_day.append(time.time())
 
 class LLMClient:
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview"):
@@ -48,21 +16,24 @@ class LLMClient:
         self.api_key = Config.API_KEY
         self.model_name = model_name
         
-        # Rate Limiter
-        self.rate_limiter = RateLimiter(Config.GEMINI_RPM, Config.GEMINI_RPD)
-        
         if not self.api_key:
             print("WARNING: No API_KEY found.")
             
         if self.provider == "gemini":
+            self.model = None
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel(self.model_name)
+                print(f"LLM Client initialized for Gemini model: {self.model_name}")
             except ImportError:
-                print("Error: google-generativeai package not installed.")
-                self.model = None
-            # Removed erroneous self.model = None line here
+                print("CRITICAL ERROR: google-generativeai package not installed.")
+                print("Please run: pip install google-generativeai")
+            except Exception as e:
+                print(f"CRITICAL ERROR: Failed to initialize Gemini model: {e}")
+            
+            if self.model is None:
+                print("WARNING: Gemini model is not available. LLM calls will fail.")
         elif self.provider == "lmstudio":
             self.base_url = Config.LMSTUDIO_BASE_URL
             print(f"LLM Client initialized for LM Studio at {self.base_url}")
@@ -74,11 +45,12 @@ class LLMClient:
         image.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Optional[Dict[str, Any]]:
-        # Enforce rate limits before any request attempt
-        if self.provider == "gemini":
-            self.rate_limiter.wait_for_slot()
-
+    async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Dict[str, Any]:
+        """LLMにリクエストを送信し、レスポンスを取得する。
+        
+        エラーが発生した場合はLLMError例外をスローする。
+        レート制限はAPI側で管理されるため、こちら側では管理しない。
+        """
         if self.provider == "gemini" and self.model:
             try:
                 if messages:
@@ -110,10 +82,10 @@ class LLMClient:
                     inputs = [prompt] + images
                     response = chat.send_message(inputs)
                     
-                    # Handle safety blocks or empty responses gracefully
+                    # Handle safety blocks or empty responses
                     if not response.parts:
-                        print(f"LLM Warning: No parts returned. Finish reason: {response.candidates[0].finish_reason}")
-                        return None
+                        finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
+                        raise LLMError(f"レスポンスが空です。終了理由: {finish_reason}")
                         
                     return self._parse_response(response.text)
                 
@@ -123,11 +95,12 @@ class LLMClient:
                     inputs = [prompt] + images
                     response = self.model.generate_content(inputs)
                     return self._parse_response(response.text)
+            except LLMError:
+                raise
             except Exception as e:
-                print(f"LLM Error: {e}")
                 import traceback
                 traceback.print_exc()
-                return None
+                raise LLMError(f"Gemini APIエラー: {e}")
         
         elif self.provider == "lmstudio":
             try:
@@ -195,18 +168,17 @@ class LLMClient:
                         text_response = result['choices'][0]['message']['content']
                         return self._parse_response(text_response)
                 except Exception as req_err:
-                    print(f"LM Studio Request Error: {req_err}")
-                    return None
+                    raise LLMError(f"LM Studio リクエストエラー: {req_err}")
                     
+            except LLMError:
+                raise
             except Exception as e:
-                print(f"LLM Error (LM Studio): {e}")
-                return None
+                raise LLMError(f"LM Studio エラー: {e}")
 
         else:
-            print(f"Provider {self.provider} not implemented or initialized.")
-            return None
+            raise LLMError(f"プロバイダー '{self.provider}' は実装されていないか、初期化されていません。")
 
-    def _parse_response(self, text: str) -> Optional[Dict[str, Any]]:
+    def _parse_response(self, text: str) -> Dict[str, Any]:
         # Extract <think> content
         thought = None
         think_match = re.search(r'<think>(.*?)</think>', text, flags=re.DOTALL)
@@ -236,5 +208,4 @@ class LLMClient:
                     return data
                 except:
                     pass
-            print(f"Failed to parse JSON: {text}\nError: {e}")
-            return None
+            raise LLMError(f"JSONパースエラー: {e}\nレスポンス: {text[:500]}")

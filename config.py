@@ -22,16 +22,39 @@ class Config:
     _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
     _LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
     
-    @property
-    def MODEL_NAME(self):
-        """Returns the appropriate model name based on the provider."""
-        # Since this is a class property used as static config, we'll use a classmethod approach 
-        # or just resolve it at class level if variables don't change at runtime.
-        # For simplicity, let's resolve it at the class level.
-        pass
-
     # Resolve MODEL_NAME statically for easy access
     if LLM_PROVIDER == "gemini":
         MODEL_NAME = _GEMINI_MODEL
     elif LLM_PROVIDER == "lmstudio":
         MODEL_NAME = _LM_STUDIO_MODEL
+    else:
+        # Fallback for unknown providers
+        MODEL_NAME = _GEMINI_MODEL
+    
+    # MCP サーバーで使用可能なライブラリリスト
+    # 標準ライブラリ (time, re, json, ctypes等) は常に使用可能
+    # 以下はサードパーティライブラリ
+    ALLOWED_LIBRARIES = [
+        # === 画面キャプチャ ===
+        "mss",           # 高速スクリーンキャプチャ
+        
+        # === 入力操作 ===
+        "pyautogui",     # マウス・キーボード操作
+        "pydirectinput", # DirectInput操作（ゲーム向け）
+        
+        # === 画像処理 ===
+        "pillow",        # 画像処理 (PIL)
+        "cv2",           # OpenCV（テンプレートマッチング等）
+        "numpy",         # 数値計算（cv2と併用）
+        
+        # === OCR ===
+        "easyocr",       # OCR文字認識
+        
+        # === ウィンドウ・システム ===
+        "pygetwindow",   # ウィンドウ操作
+        "psutil",        # システム情報・プロセス監視
+        "pyperclip",     # クリップボード操作
+        
+        # === Windows専用 ===
+        "pywin32",       # Windows API (win32gui, win32api等)
+    ]

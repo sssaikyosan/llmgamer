@@ -3,14 +3,17 @@ import os
 import sys
 import json
 import time
+import base64
+import io
 from typing import List, Dict, Any, Optional
+from PIL import Image
 
 from dotenv import load_dotenv
 
 # Local imports
 from mcp_manager import MCPManager
 from memory_manager import MemoryManager
-from llm_client import LLMClient
+from llm_client import LLMClient, LLMError
 from utils.vision import capture_screenshot
 from prompts import get_system_prompt, get_user_turn_prompt
 from agent_state import AgentState
@@ -40,8 +43,6 @@ class GameAgent:
         self.mcp_manager.attach_memory_manager(self.memory_manager)
 
         # Dashboard is now started in __main__ to support initial input
-        # Ensure meta_manager exists (virtual, so always True for now in revised logic)
-        pass
 
         # Discover and start all MCP servers in workspace
         workspace_dir = os.path.join(os.getcwd(), "workspace")
@@ -96,32 +97,10 @@ class GameAgent:
             print(error_msg)
             return error_msg
 
-    async def create_new_tool(self, name: str, description: str, code: str):
-        print(f"Creating new MCP server: {name}...")
-        try:
-            await self.mcp_manager.create_server(name, code)
-            await self.mcp_manager.start_server(name)
-            return f"Successfully created and started server '{name}'."
-        except Exception as e:
-            return f"Failed to create server '{name}': {e}"
-
-    async def delete_tool(self, name: str):
-        print(f"Deleting MCP server: {name}...")
-        try:
-            await self.mcp_manager.delete_server(name)
-            return f"Successfully deleted server '{name}'."
-        except Exception as e:
-            return f"Failed to delete server '{name}': {e}"
-
     async def think(self, screenshot_base64: str, timestamp: float) -> Optional[Dict[str, Any]]:
         print("Thinking...")
         
-        # Decode screenshot for current turn usage if needed (LLMClient handles it? No, LLMClient expects PIL or list)
-        # We need to convert base64 to PIL Image for LLMClient
-        import base64
-        import io
-        from PIL import Image
-        
+        # Decode screenshot for current turn usage - convert base64 to PIL Image
         current_img = None
         if screenshot_base64:
             image_data = base64.b64decode(screenshot_base64)
@@ -280,17 +259,13 @@ class GameAgent:
                         
                         # Add tool result to message history so the model sees it in the next turn
                         self.state.add_message("user", f"Tool '{tool}' executed. Result: {str(result)[:500]}")
-                        self.state.add_history(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}") # Keep for logging/compatibility if needed
                         
                         # Update dashboard again after tool execution (in case memory/tools changed)
                         update_dashboard_state(
                             memories=self.memory_manager.memories,
                             tools=self.mcp_manager.get_tools_categorized()
                         )
-                    else:
-                        pass
-                        # Removed task update logic
-                        
+                    # WAIT action or other non-tool actions - no processing needed
                 else:
                     print("No decision made.")
 
@@ -298,13 +273,18 @@ class GameAgent:
                 # Save checkpoint after every turn (regardless of decision)
                 self.save_checkpoint()
                 
-                time.sleep(2)
+                await asyncio.sleep(2)
 
                         
                 
         except KeyboardInterrupt:
             print("Stopping agent...")
             self.save_checkpoint() # Save on exit too
+        except LLMError as e:
+            print(f"\n=== LLM Error - Agent Stopped ===")
+            print(f"Error: {e}")
+            print("エージェントを停止します。")
+            self.save_checkpoint()
         finally:
             await self.shutdown()
 

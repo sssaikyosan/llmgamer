@@ -1,5 +1,4 @@
-import json
-from typing import Dict, Optional
+from typing import Dict
 
 class MemoryManager:
     def __init__(self):

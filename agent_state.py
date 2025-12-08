@@ -1,9 +1,5 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import datetime
-import base64
-import io
-import os
-from PIL import Image
 
 class AgentState:
     def __init__(self, max_history: int = 10):

@@ -21,6 +21,7 @@ app.add_middleware(
 # Shared State
 class DashboardState:
     def __init__(self):
+        self._lock = threading.Lock()
         self.screenshot_base64: Optional[str] = None
         self.thought: str = "Waiting for agent thought process..."
         self.memories: Dict[str, str] = {}
@@ -35,31 +36,34 @@ class DashboardState:
 state = DashboardState()
 
 def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None):
-    if screenshot:
-        state.screenshot_base64 = screenshot
-    if thought:
-        state.thought = thought
-    if memories:
-        state.memories = memories
-    if tools:
-        state.tools = tools
-    if tool_log:
-        state.tool_log = tool_log
+    with state._lock:
+        if screenshot:
+            state.screenshot_base64 = screenshot
+        if thought:
+            state.thought = thought
+        if memories:
+            state.memories = memories
+        if tools:
+            state.tools = tools
+        if tool_log:
+            state.tool_log = tool_log
 
 def request_user_input(prompt: str):
-    state.waiting_for_input = True
-    state.input_prompt = prompt
-    state.last_user_input = None # Reset previous input
+    with state._lock:
+        state.waiting_for_input = True
+        state.input_prompt = prompt
+        state.last_user_input = None  # Reset previous input
 
 def get_submitted_input() -> Optional[str]:
-    if state.last_user_input is not None:
-        input_val = state.last_user_input
-        # Reset state after reading
-        state.waiting_for_input = False
-        state.input_prompt = ""
-        state.last_user_input = None
-        return input_val
-    return None
+    with state._lock:
+        if state.last_user_input is not None:
+            input_val = state.last_user_input
+            # Reset state after reading
+            state.waiting_for_input = False
+            state.input_prompt = ""
+            state.last_user_input = None
+            return input_val
+        return None
 
 from pydantic import BaseModel
 class UserInput(BaseModel):
@@ -67,23 +71,25 @@ class UserInput(BaseModel):
 
 @app.post("/api/submit_input")
 async def submit_input(input_data: UserInput):
-    state.last_user_input = input_data.text
-    state.waiting_for_input = False
+    with state._lock:
+        state.last_user_input = input_data.text
+        state.waiting_for_input = False
     return {"status": "ok"}
 
 @app.get("/api/state")
 async def get_state():
-    return {
-        "screenshot": state.screenshot_base64,
-        "thought": state.thought,
-        "memories": state.memories,
-        "tools": state.tools,
-        "tool_log": state.tool_log,
-        
-        # Input State
-        "waiting_for_input": state.waiting_for_input,
-        "input_prompt": state.input_prompt
-    }
+    with state._lock:
+        return {
+            "screenshot": state.screenshot_base64,
+            "thought": state.thought,
+            "memories": state.memories.copy(),  # Copy to avoid race conditions
+            "tools": state.tools.copy() if state.tools else {},
+            "tool_log": state.tool_log,
+            
+            # Input State
+            "waiting_for_input": state.waiting_for_input,
+            "input_prompt": state.input_prompt
+        }
 
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard():

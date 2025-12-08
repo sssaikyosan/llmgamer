@@ -10,8 +10,7 @@ class Config:
     # Core Settings
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
     API_KEY = os.getenv("API_KEY")
-    GEMINI_RPM = int(os.getenv("GEMINI_RPM", "10"))
-    GEMINI_RPD = int(os.getenv("GEMINI_RPD", "250"))
+
     MAX_HISTORY = int(os.getenv("MAX_HISTORY", "10"))
     
     # Service Specific Settings

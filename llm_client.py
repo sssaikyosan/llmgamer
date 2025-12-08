@@ -53,11 +53,22 @@ class LLMClient:
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
     async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Dict[str, Any]:
-        """LLMにリクエストを送信し、レスポンスを取得する。
-        
-        エラーが発生した場合はLLMError例外をスローする。
-        レート制限はAPI側で管理されるため、こちら側では管理しない。
-        """
+        """LLMにリクエストを送信し、レスポンスを取得する（自動リトライ付き）。"""
+        max_retries = 3
+        import asyncio
+        for attempt in range(max_retries):
+            try:
+                return await self._generate_response_impl(prompt, images, messages)
+            except (LLMError, json.JSONDecodeError) as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed after {max_retries} attempts. Last error: {e}")
+                    raise
+                logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
+                await asyncio.sleep(1)
+        return None
+
+    async def _generate_response_impl(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Dict[str, Any]:
+        """LLMリクエストの実装部分。"""
         if self.provider == "gemini" and self.model:
             try:
                 if messages:
@@ -208,12 +219,5 @@ class LLMClient:
                     pass
             
             # Fallback for non-JSON responses (e.g. plain text or code)
-            logger.warning(f"JSON parse failed. Treating response as raw text. Error: {e}")
-            
-            # Construct a fallback response object
-            fallback_data = {
-                "thought": text,  # Treat the raw text as the thought/content
-                "action_type": "WAIT",
-            }
-            
-            return fallback_data
+            logger.warning(f"JSON parse failed. Error: {e}")
+            raise e

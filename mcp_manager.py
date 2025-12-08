@@ -90,9 +90,9 @@ class MCPManager:
     def _init_meta_tools(self) -> List[Dict[str, Any]]:
         libs = self._get_allowed_libraries_str()
         
-        mcp_creation_rules = f"""Create Python MCP server in 'workspace/'. Use FastMCP. Libs: stdlib + [{libs}]"""
+        mcp_creation_rules = f"""Create Python MCP server in 'workspace/'. Use 'from fastmcp import FastMCP'. Libs: stdlib + [{libs}]"""
         
-        mcp_edit_rules = f"""Edit MCP server in 'workspace/' and restart. Libs: stdlib + [{libs}]"""
+        mcp_edit_rules = f"""Edit MCP server in 'workspace/'. Libs: stdlib + [{libs}]"""
 
         return [
             {
@@ -227,9 +227,12 @@ class MCPManager:
 
         logger.info(f"Starting MCP Server: {name}...")
         
+        # Use the runner script to execute the server
+        runner_script = os.path.join(os.getcwd(), "utils", "mcp_runner.py")
+        
         server_params = StdioServerParameters(
             command=self.python_exe,
-            args=[filepath],
+            args=[runner_script, filepath],
             env=os.environ.copy()
         )
         

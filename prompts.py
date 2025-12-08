@@ -16,18 +16,23 @@ The following memories are persistent and can be modified using 'memory_manager'
 3. Restrictions: NO terminal commands. NO installing new libraries.
 4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time, easyocr}}.
 
-[MCP CREATION RULES]
-When creating new tools via 'create_mcp_server', you MUST adhere to these technical standards:
+[MCP CREATION & EDITING RULES]
+When creating or editing tools via 'create_mcp_server' or 'edit_mcp_server', you MUST adhere to these technical standards:
 1. **Library**: Use `from mcp.server.fastmcp import FastMCP`.
-2. **Initialization**: Initialize with `mcp = FastMCP("server_name")`.
-3. **Tools**: Use the `@mcp.tool()` decorator for all exposed functions.
+2. **Structure**: If you need state (e.g., coordinates), use a **Class**.
+3. **Registration**: 
+    - **DO NOT** use the `@mcp.tool()` decorator inside a Class (it causes `NameError`).
+    - Instead, instantiate your class and register methods using `mcp.add_tool(instance.method_name)` inside the `if __name__ == "__main__":` block.
 4. **Type Hints**: ALL arguments must have Python type hints (e.g., `x: int`, `name: str`).
 5. **Docstrings**: ALL tools must have a detailed docstring explaining inputs and purpose.
-6. **Entry Point**: The file MUST end with:
-   ```python
-   if __name__ == "__main__":
-       mcp.run()
-   ```
+6. **Entry Point Template**: The file MUST end with this pattern:
+    ```python
+    if __name__ == "__main__":
+        mcp = FastMCP("server_name")
+        # service = MyService()
+        # mcp.add_tool(service.tool_name)
+        mcp.run()
+    ```
 7. **Dependencies**: Do NOT import external libraries outside the allowed list (see Rule 4).
 8. **Error Handling**: Wrap logic in try/except blocks and return clear error messages as strings if something fails.
 

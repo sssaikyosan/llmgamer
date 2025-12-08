@@ -118,28 +118,6 @@ class MCPManager:
                 }
             },
             {
-                "name": "start_mcp_server",
-                "description": "Start an existing MCP server to add its tools to the context.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Name of the server to start (without .py extension)."}
-                    },
-                    "required": ["name"]
-                }
-            },
-            {
-                "name": "stop_mcp_server",
-                "description": "Stop a running MCP server without deleting the file.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Name of the server to stop (without .py extension)."}
-                    },
-                    "required": ["name"]
-                }
-            },
-            {
                 "name": "read_mcp_code",
                 "description": "Read the source code of an existing MCP server.",
                 "inputSchema": {
@@ -148,6 +126,18 @@ class MCPManager:
                         "name": {"type": "string", "description": "Name of the server to read (without .py extension)."}
                     },
                     "required": ["name"]
+                }
+            },
+            {
+                "name": "edit_mcp_server",
+                "description": "Edit/Overwrite an existing MCP server file in the 'workspace' directory and restart it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server to edit (without .py extension)."},
+                        "code": {"type": "string", "description": "The new full Python code for the MCP server."}
+                    },
+                    "required": ["name", "code"]
                 }
             }
         ]
@@ -407,17 +397,6 @@ class MCPManager:
                     output.append(f"Workspace servers: {', '.join(ws_files) if ws_files else '(none)'}")
                 output_text = "\n".join(output)
 
-            elif tool_name == "start_mcp_server":
-                name = args.get("name")
-                success, msg = await self.start_server(name)
-                output_text = msg if success else f"Error: {msg}"
-
-            elif tool_name == "stop_mcp_server":
-                name = args.get("name")
-                if await self.stop_server(name):
-                    output_text = f"Successfully stopped server: {name}"
-                else:
-                    output_text = f"Server {name} was not running or could not be stopped."
             
             elif tool_name == "read_mcp_code":
                 name = args.get("name")
@@ -429,6 +408,25 @@ class MCPManager:
                     output_text = f"--- Code for {name}.py ---\n{code}\n---------------------------"
                 else:
                     output_text = f"Error: Server file '{name}.py' not found."
+
+            elif tool_name == "edit_mcp_server":
+                name = args.get("name")
+                code = args.get("code")
+                filepath = os.path.join(self.work_dir, f"{name}.py")
+                
+                if not os.path.exists(filepath):
+                    output_text = f"Error: Server '{name}' does not exist. Use create_mcp_server to create a new one."
+                else:
+                    # Update file
+                    await self.create_server(name, code)
+                    
+                    # Restart/Start
+                    if name in self.active_servers:
+                        await self.stop_server(name)
+                        await asyncio.sleep(0.5)
+                    
+                    success, msg = await self.start_server(name)
+                    output_text = f"Edited and started server '{name}'. {msg}"
 
             else:
                 output_text = f"Error: Unknown meta tool '{tool_name}'"

@@ -47,15 +47,19 @@ class GameAgent:
         # Ensure meta_manager exists (virtual, so always True for now in revised logic)
         pass
 
-        # Start Input Tools (for Basic Interactions) - Check workspace
-        if os.path.exists(os.path.join("workspace", "input_tools.py")):
-             success, msg = await self.mcp_manager.start_server("input_tools")
-             if success:
-                 print("Input Tools Server started.")
-             else:
-                 print(f"Warning: Failed to start input_tools from workspace: {msg}")
-            
-        print("Agent Initialized. LLM can now create its own tools in workspace.")
+        # Discover and start all MCP servers in workspace
+        workspace_dir = os.path.join(os.getcwd(), "workspace")
+        if os.path.exists(workspace_dir):
+            for filename in os.listdir(workspace_dir):
+                if filename.endswith(".py"):
+                    server_name = filename[:-3]
+                    success, msg = await self.mcp_manager.start_server(server_name)
+                    if success:
+                        print(f"Started server: {server_name}")
+                    else:
+                        print(f"Warning: Failed to start server {server_name}: {msg}")
+        
+        print("Agent Initialized. All discovered tools are running.")
 
     async def shutdown(self):
         await self.mcp_manager.shutdown_all()
@@ -155,30 +159,38 @@ class GameAgent:
         return response
 
     def save_checkpoint(self, filename: str = "agent_checkpoint.json"):
-        """Save the current state of the agent to a file."""
-        print(f"Saving checkpoint to {filename}...")
+        """Save the current state of the agent to a file in the history directory."""
+        history_dir = "history"
+        if not os.path.exists(history_dir):
+            os.makedirs(history_dir)
+            
+        filepath = os.path.join(history_dir, filename)
+        print(f"Saving checkpoint to {filepath}...")
+        
         data = {
             "memory_manager": self.memory_manager.memories,
             "agent_state": self.state.to_dict(),
-            "active_mcp_servers": self.mcp_manager.get_active_server_names(),
             "timestamp": time.time()
         }
         try:
-            with open(filename, "w", encoding="utf-8") as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             print("Checkpoint saved.")
         except Exception as e:
             print(f"Failed to save checkpoint: {e}")
 
     async def load_checkpoint(self, filename: str = "agent_checkpoint.json"):
-        """Load agent state from a file."""
-        print(f"Loading checkpoint from {filename}...")
+        """Load agent state from a file in the history directory."""
+        history_dir = "history"
+        filepath = os.path.join(history_dir, filename)
+        
+        print(f"Loading checkpoint from {filepath}...")
         try:
-            if not os.path.exists(filename):
+            if not os.path.exists(filepath):
                 print("Checkpoint file not found.")
                 return False
 
-            with open(filename, "r", encoding="utf-8") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             # Restore MemoryManager
@@ -189,15 +201,7 @@ class GameAgent:
             if "agent_state" in data:
                 self.state.from_dict(data["agent_state"])
 
-            # Restore MCP Servers
-            # We restart them based on the list
-            if "active_mcp_servers" in data:
-                for server_name in data["active_mcp_servers"]:
-                    if server_name not in self.mcp_manager.active_servers:
-                        print(f"Restoring server: {server_name}")
-                        success, msg = await self.mcp_manager.start_server(server_name)
-                        if not success:
-                            print(f"Warning: Failed to restore server {server_name}: {msg}")
+
 
             print("Checkpoint loaded successfully.")
             return True
@@ -208,14 +212,13 @@ class GameAgent:
             return False
 
     async def run_loop(self, resume: bool = False):
+        await self.initialize()
+        
         if resume:
             if await self.load_checkpoint():
                 print("Resumed from checkpoint.")
             else:
                 print("Could not resume. Starting fresh.")
-                await self.initialize()
-        else:
-            await self.initialize()
         
         # No screenshot cleanup needed anymore
         

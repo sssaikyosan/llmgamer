@@ -23,6 +23,7 @@ class ActiveServer:
     last_used: float = field(default_factory=time.time)
     usage_count: int = 0
     created_at: float = field(default_factory=time.time)
+    stop_event: asyncio.Event = None
 
 class MCPManager:
     def __init__(self):
@@ -36,6 +37,76 @@ class MCPManager:
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
 
+        self.meta_tools = self._init_meta_tools()
+
+    def _init_meta_tools(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "create_mcp_server",
+                "description": "Create a new MCP server file in the 'workspace' directory and immediately start it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server (without .py extension)."},
+                        "code": {"type": "string", "description": "The full Python code for the MCP server."}
+                    },
+                    "required": ["name", "code"]
+                }
+            },
+            {
+                "name": "delete_mcp_server",
+                "description": "Stop and delete an existing MCP server file from the 'workspace' directory.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server to delete (without .py extension)."}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "list_mcp_files",
+                "description": "List all available MCP server files in 'servers/' (Core) and 'workspace/' (Created).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                }
+            },
+            {
+                "name": "start_mcp_server",
+                "description": "Start an existing MCP server to add its tools to the context.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server to start (without .py extension)."}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "stop_mcp_server",
+                "description": "Stop a running MCP server without deleting the file.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server to stop (without .py extension)."}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "read_mcp_code",
+                "description": "Read the source code of an existing MCP server.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name of the server to read (without .py extension)."}
+                    },
+                    "required": ["name"]
+                }
+            }
+        ]
+
     async def create_server(self, name: str, code: str) -> str:
         """
         Create a new MCP server script file in the workspace directory.
@@ -45,15 +116,12 @@ class MCPManager:
         
         # Basic validation to ensure it imports mcp
         if "import mcp" not in code and "from mcp" not in code:
-             # Add basic boilerplate if missing (simplified)
              pass 
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(code)
             
         return filepath
-
-
 
     async def _server_lifecycle(self, name: str, params: StdioServerParameters, init_future: asyncio.Future):
         """
@@ -73,7 +141,7 @@ class MCPManager:
                     tools_result = await session.list_tools()
                     if name in self.active_servers:
                         self.active_servers[name].tools = tools_result.tools
-
+                        
                     # Signal success
                     if not init_future.done():
                         init_future.set_result(True)
@@ -95,11 +163,15 @@ class MCPManager:
             if name in self.active_servers:
                 print(f"Server {name} lifecycle ended.")
 
-    async def start_server(self, name: str) -> (bool, str):
+    async def start_server(self, name: str) -> bool:
         """
         Start an MCP server and connect to it.
         Returns (success, message).
         """
+        # Virtual Meta Manager handling
+        if name == "meta_manager":
+            return True, "Meta Manager is a virtual server and is always active."
+
         # Search in workspace first, then core
         filepath = os.path.join(self.work_dir, f"{name}.py")
         if not os.path.exists(filepath):
@@ -161,10 +233,13 @@ class MCPManager:
                 del self.active_servers[name]
             return False, msg
 
-    async def stop_server(self, name: str):
+    async def stop_server(self, name: str) -> bool:
         """
         Stop an active MCP server.
         """
+        if name == "meta_manager":
+            return True # Cannot stop virtual server
+
         if name in self.active_servers:
             server = self.active_servers[name]
             print(f"Stopping server: {name}")
@@ -182,33 +257,41 @@ class MCPManager:
             return True
         return False
 
-    async def delete_server(self, name: str):
+    async def delete_server(self, name: str) -> str:
         """
         Stop and delete the server file.
         """
+        if name == "meta_manager":
+            return "Error: Cannot delete the meta_manager server itself."
+
         await self.stop_server(name)
         
         # Check workspace first
         filepath = os.path.join(self.work_dir, f"{name}.py")
         if os.path.exists(filepath):
             os.remove(filepath)
-            print(f"Deleted server file: {filepath}")
-            return
+            msg = f"Deleted server file: {filepath}"
+            print(msg)
+            return msg
             
         # Then check core (optional: maybe prevent deleting core?)
         filepath = os.path.join(self.core_dir, f"{name}.py")
         if os.path.exists(filepath):
-            # Safe-guard: Don't delete meta_manager
-            if name == "meta_manager":
-                print("Cannot delete meta_manager.")
-                return
             os.remove(filepath)
-            print(f"Deleted server file: {filepath}")
+            msg = f"Deleted server file: {filepath}"
+            print(msg)
+            return msg
+            
+        return f"Error: Server file '{name}.py' not found in workspace or servers."
 
     async def call_tool(self, server_name: str, tool_name: str, args: dict) -> Any:
         """
         Call a tool on a specific server.
         """
+        # Handle Virtual Meta Manager Tools
+        if server_name == "meta_manager":
+            return await self._call_meta_tool(tool_name, args)
+
         if server_name not in self.active_servers:
             raise ValueError(f"Server {server_name} is not active.")
         
@@ -219,12 +302,103 @@ class MCPManager:
         result = await server.session.call_tool(tool_name, args)
         return result
 
+    async def _call_meta_tool(self, tool_name: str, args: dict) -> Any:
+        # Compatibility wrapper for tool results to match MCP SDK structure if needed,
+        # but for now we return simple strings or objects that LLMClient can handle.
+        # Actually LLMClient expects an object with .content[0].text if it comes from MCP,
+        # so we might need to mock that structure or adjust LLMClient/Agent.
+        # For simplicity, let's return a Mock object that looks like MCP result.
+        
+        @dataclass
+        class MockTextContent:
+            text: str
+        @dataclass
+        class MockResult:
+            content: List[MockTextContent]
+
+        output_text = ""
+        
+        try:
+            if tool_name == "create_mcp_server":
+                name = args.get("name")
+                code = args.get("code")
+                
+                # Create file
+                await self.create_server(name, code)
+                
+                # Auto start (delete old if running)
+                if name in self.active_servers:
+                    await self.stop_server(name)
+                    await asyncio.sleep(0.5)
+                
+                success, msg = await self.start_server(name)
+                output_text = f"Created and started server '{name}'. {msg}"
+
+            elif tool_name == "delete_mcp_server":
+                name = args.get("name")
+                output_text = await self.delete_server(name)
+
+            elif tool_name == "list_mcp_files":
+                output = []
+                if os.path.exists(self.core_dir):
+                    core_files = [f[:-3] for f in os.listdir(self.core_dir) if f.endswith(".py")]
+                    output.append(f"Core servers: {', '.join(core_files)}")
+                if os.path.exists(self.work_dir):
+                    ws_files = [f[:-3] for f in os.listdir(self.work_dir) if f.endswith(".py")]
+                    output.append(f"Workspace servers: {', '.join(ws_files) if ws_files else '(none)'}")
+                output_text = "\n".join(output)
+
+            elif tool_name == "start_mcp_server":
+                name = args.get("name")
+                success, msg = await self.start_server(name)
+                output_text = msg if success else f"Error: {msg}"
+
+            elif tool_name == "stop_mcp_server":
+                name = args.get("name")
+                if await self.stop_server(name):
+                    output_text = f"Successfully stopped server: {name}"
+                else:
+                    output_text = f"Server {name} was not running or could not be stopped."
+            
+            elif tool_name == "read_mcp_code":
+                name = args.get("name")
+                filepath = os.path.join(self.work_dir, f"{name}.py")
+                if not os.path.exists(filepath):
+                    filepath = os.path.join(self.core_dir, f"{name}.py")
+                
+                if os.path.exists(filepath):
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        code = f.read()
+                    output_text = f"--- Code for {name}.py ---\n{code}\n---------------------------"
+                else:
+                    output_text = f"Error: Server file '{name}.py' not found."
+
+            else:
+                output_text = f"Error: Unknown meta tool '{tool_name}'"
+
+        except Exception as e:
+            output_text = f"Error executing meta tool {tool_name}: {str(e)}"
+            import traceback
+            traceback.print_exc()
+
+        return MockResult(content=[MockTextContent(text=output_text)])
+
     def get_all_tools(self) -> List[Dict[str, Any]]:
         """
-        Return a list of all available tools across all active servers.
-        Format suitable for LLM context.
+        Return a list of all available tools across all active servers AND meta tools.
         """
         all_tools = []
+        
+        # Add Meta Tools
+        for tool in self.meta_tools:
+            all_tools.append({
+                "server": "meta_manager",
+                "name": tool["name"],
+                "description": tool["description"],
+                "inputSchema": tool["inputSchema"]
+            })
+
+        # Add Active Server Tools
         for server_name, server in self.active_servers.items():
             for tool in server.tools:
                 all_tools.append({
@@ -238,9 +412,19 @@ class MCPManager:
     def get_tools_categorized(self) -> Dict[str, List[Dict[str, Any]]]:
         """
         Return tools separated by Core (servers/) and User (workspace/).
+        Meta tools are included in Core.
         """
         core_tools = []
         user_tools = []
+
+        # Add Meta Tools to Core
+        for tool in self.meta_tools:
+            core_tools.append({
+                "server": "meta_manager",
+                "name": tool["name"],
+                "description": tool["description"],
+                "inputSchema": tool["inputSchema"]
+            })
 
         for server_name, server in self.active_servers.items():
             # Normalize paths to be safe

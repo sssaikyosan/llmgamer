@@ -17,6 +17,8 @@ from agent_state import AgentState
 
 from config import Config
 
+from dashboard import start_dashboard_thread, update_dashboard_state
+
 # Configuration
 # LLM Provider and Model are now loaded from Config
 
@@ -24,8 +26,7 @@ class GameAgent:
     def __init__(self, initial_task: str = "Play the game"):
         self.mcp_manager = MCPManager()
         self.memory_manager = MemoryManager()
-        self.mcp_manager = MCPManager()
-        self.memory_manager = MemoryManager()
+        # Removed duplicate init lines
         self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.MODEL_NAME)
         self.state = AgentState(max_history=Config.MAX_HISTORY)
         
@@ -37,6 +38,12 @@ class GameAgent:
         """Initialize the agent and start the meta_manager server."""
         # Attach Memory Manager so MCPManager can route tools to it
         self.mcp_manager.attach_memory_manager(self.memory_manager)
+
+        # Start Dashboard
+        try:
+            start_dashboard_thread()
+        except Exception as e:
+            print(f"Failed to start dashboard: {e}")
 
         # Ensure meta_manager exists (virtual, so always True for now in revised logic)
         pass
@@ -54,6 +61,12 @@ class GameAgent:
                         print(f"Warning: Failed to start server {server_name}: {msg}")
         
         print("Agent Initialized. All discovered tools are running.")
+        
+        # Initial Dashboard Update
+        update_dashboard_state(
+            memories=self.memory_manager.memories, 
+            tools=self.mcp_manager.get_tools_categorized()
+        )
 
     async def shutdown(self):
         await self.mcp_manager.shutdown_all()
@@ -65,6 +78,12 @@ class GameAgent:
         print(f"Executing: {server_name}.{tool_name} with {args}")
         try:
             result = await self.mcp_manager.call_tool(server_name, tool_name, args)
+            
+            # Update Dashboard tools if we modified them (create/delete)
+            # A bit inefficient to do it on every tool call, but safe
+            if server_name == "meta_manager":
+                 update_dashboard_state(tools=self.mcp_manager.get_tools_categorized())
+            
             # Handle result content structure properly if it's the specific object or string
             if hasattr(result, 'content') and isinstance(result.content, list) and len(result.content) > 0:
                  output = result.content[0].text
@@ -151,7 +170,13 @@ class GameAgent:
              self.state.add_message("user", user_prompt)
              
              # Add the Model's response to history
-             self.state.add_message("assistant", json.dumps(response))
+             # Note: response might now contain _thought, we should remove it before storing to history if we don't want to bloat it?
+             # Or keep it. Let's keep it clean for the history log.
+             response_to_store = response.copy()
+             if "_thought" in response_to_store:
+                 del response_to_store["_thought"]
+
+             self.state.add_message("assistant", json.dumps(response_to_store))
              
         return response
 
@@ -200,6 +225,7 @@ class GameAgent:
 
 
 
+
             print("Checkpoint loaded successfully.")
             return True
         except Exception as e:
@@ -227,13 +253,23 @@ class GameAgent:
 
                 screenshot, timestamp = await self.get_screenshot()
                 
+                # Update Dashboard with new screenshot
+                update_dashboard_state(screenshot=screenshot)
+                
                 decision = await self.think(screenshot, timestamp)
                 
                 if decision:
-                    thought = decision.get("thought")
+                    thought = decision.get("_thought", decision.get("thought", "No thought"))
                     action_type = decision.get("action_type")
                     print(f"Thought: {thought}")
                     
+                    # Update Dashboard with thought and memories (in case memories changed during think? unlikely but persistent)
+                    # Also update memories if any tool changed them (detected via memory_manager check below or blindly update)
+                    update_dashboard_state(
+                        thought=thought, 
+                        memories=self.memory_manager.memories
+                    )
+
                     # Handle Actions
                     if action_type == "CALL_TOOL":
                         server = decision.get("server_name")
@@ -247,12 +283,18 @@ class GameAgent:
                         self.state.add_message("user", f"Tool '{tool}' executed. Result: {str(result)[:500]}")
                         self.state.add_history(f"Called {tool} (Args: {args}) -> Result: {str(result)[:500]}") # Keep for logging/compatibility if needed
                         
+                        # Update dashboard again after tool execution (in case memory/tools changed)
+                        update_dashboard_state(
+                            memories=self.memory_manager.memories,
+                            tools=self.mcp_manager.get_tools_categorized()
+                        )
                     else:
                         pass
                         # Removed task update logic
                         
                 else:
                     print("No decision made.")
+
                 
                 # Save checkpoint after every turn (regardless of decision)
                 self.save_checkpoint()

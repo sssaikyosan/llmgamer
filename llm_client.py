@@ -207,6 +207,12 @@ class LLMClient:
             return None
 
     def _parse_response(self, text: str) -> Optional[Dict[str, Any]]:
+        # Extract <think> content
+        thought = None
+        think_match = re.search(r'<think>(.*?)</think>', text, flags=re.DOTALL)
+        if think_match:
+            thought = think_match.group(1).strip()
+
         # Remove <think> blocks for JSON parsing
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         
@@ -216,6 +222,8 @@ class LLMClient:
         
         try:
             data = json.loads(text)
+            if thought:
+                data["_thought"] = thought
             return data
         except json.JSONDecodeError as e:
             start = text.find('{')
@@ -223,6 +231,8 @@ class LLMClient:
             if start != -1 and end != -1:
                 try:
                     data = json.loads(text[start:end+1])
+                    if thought:
+                        data["_thought"] = thought
                     return data
                 except:
                     pass

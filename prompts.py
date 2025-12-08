@@ -35,6 +35,7 @@ When creating or editing tools via 'create_mcp_server' or 'edit_mcp_server', you
     ```
 7. **Dependencies**: Do NOT import external libraries outside the allowed list (see Rule 4).
 8. **Error Handling**: Wrap logic in try/except blocks and return clear error messages as strings if something fails.
+9. **Safety**: Created tools MUST NOT contain infinite loops. ALL loops must have an explicit exit condition or a safety break (e.g., `max_iterations`, `timeout`) to assure termination.
 
 Analyze the situation and Output JSON ONLY:
 {{

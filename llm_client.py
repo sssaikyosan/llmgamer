@@ -1,16 +1,13 @@
 import os
 import re
 import json
+from config import Config
 from typing import List, Dict, Any, Optional
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 class LLMClient:
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview"):
         self.provider = provider
-        self.api_key = os.getenv("API_KEY")
+        self.api_key = Config.API_KEY
         self.model_name = model_name
         
         if not self.api_key:
@@ -24,8 +21,9 @@ class LLMClient:
             except ImportError:
                 print("Error: google-generativeai package not installed.")
                 self.model = None
+            self.model = None
         elif self.provider == "lmstudio":
-            self.base_url = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+            self.base_url = Config.LMSTUDIO_BASE_URL
             print(f"LLM Client initialized for LM Studio at {self.base_url}")
 
     def _pil_to_base64(self, image) -> str:

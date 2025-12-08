@@ -15,24 +15,18 @@ from utils.vision import capture_screenshot
 from prompts import get_system_prompt, get_user_turn_prompt
 from agent_state import AgentState
 
-# Load environment variables
-load_dotenv()
+from config import Config
 
 # Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini") 
-# Model name can be adjusted here or passed to LLMClient
-if LLM_PROVIDER == "gemini":
-    MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3-pro-preview")
-elif LLM_PROVIDER == "lmstudio":
-    MODEL_NAME = os.getenv("LM_STUDIO_MODEL", "local-model")
-else:
-    MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3-pro-preview") 
+# LLM Provider and Model are now loaded from Config
 
 class GameAgent:
     def __init__(self, initial_task: str = "Play the game"):
         self.mcp_manager = MCPManager()
         self.memory_manager = MemoryManager()
-        self.llm_client = LLMClient(provider=LLM_PROVIDER, model_name=MODEL_NAME)
+        self.mcp_manager = MCPManager()
+        self.memory_manager = MemoryManager()
+        self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.MODEL_NAME)
         self.state = AgentState()
         
         # Initialize memory with initial task if provided and empty

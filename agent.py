@@ -120,10 +120,8 @@ class GameAgent:
 
         current_time_str = self.state.get_current_time_str(timestamp)
         
-        # Get categorized tools for System Prompt
-        tools_cat = self.mcp_manager.get_tools_categorized()
-        core_desc = json.dumps(tools_cat["core"], indent=2)
-        user_desc = json.dumps(tools_cat["user"], indent=2)
+        # Get compact tool descriptions for System Prompt
+        core_desc, user_desc = self.mcp_manager.get_tools_compact()
         
         # 1. System Prompt (Dynamic part of system instructions)
         system_prompt = get_system_prompt(core_desc, user_desc, memory_str, max_history=self.state.max_history)

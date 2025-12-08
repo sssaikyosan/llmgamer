@@ -60,83 +60,86 @@ class MCPManager:
         return [
             {
                 "name": "set_memory",
-                "description": "Add a new memory or update an existing one. Use this for tasks, facts, or state tracking.",
+                "description": "Save persistent info (plan, coords, facts).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "Title for the memory."},
-                        "content": {"type": "string", "description": "The content to store."}
+                        "title": {"type": "string"},
+                        "content": {"type": "string"}
                     },
                     "required": ["title", "content"]
                 }
             },
             {
                 "name": "delete_memory",
-                "description": "Delete a memory by its title.",
+                "description": "Delete memory by title.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "The title of the memory to delete."}
+                        "title": {"type": "string"}
                     },
                     "required": ["title"]
                 }
             }
         ]
 
+    def _get_allowed_libraries_str(self) -> str:
+        from config import Config
+        return ", ".join(Config.ALLOWED_LIBRARIES)
+
     def _init_meta_tools(self) -> List[Dict[str, Any]]:
+        libs = self._get_allowed_libraries_str()
+        
+        mcp_creation_rules = f"""Create Python MCP server in 'workspace/'. Use FastMCP. Libs: stdlib + [{libs}]"""
+        
+        mcp_edit_rules = f"""Edit MCP server in 'workspace/' and restart. Libs: stdlib + [{libs}]"""
+
         return [
             {
                 "name": "create_mcp_server",
-                "description": "Create a new MCP server file in the 'workspace' directory and immediately start it.",
+                "description": mcp_creation_rules,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Name of the server (without .py extension)."},
-                        "code": {"type": "string", "description": "The full Python code for the MCP server."}
+                        "name": {"type": "string", "description": "without .py"},
+                        "code": {"type": "string", "description": "full code"}
+                    },
+                    "required": ["name", "code"]
+                }
+            },
+            {
+                "name": "edit_mcp_server",
+                "description": mcp_edit_rules,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "without .py"},
+                        "code": {"type": "string", "description": "full code (replaces entire file)"}
                     },
                     "required": ["name", "code"]
                 }
             },
             {
                 "name": "delete_mcp_server",
-                "description": "Stop and delete an existing MCP server file from the 'workspace' directory.",
+                "description": "Delete MCP server.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Name of the server to delete (without .py extension)."}
-                    },
+                    "properties": {"name": {"type": "string", "description": "without .py"}},
                     "required": ["name"]
                 }
             },
             {
                 "name": "list_mcp_files",
-                "description": "List all available MCP server files in 'workspace/'.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                }
+                "description": "List MCP servers.",
+                "inputSchema": {"type": "object", "properties": {}}
             },
             {
                 "name": "read_mcp_code",
-                "description": "Read the source code of an existing MCP server.",
+                "description": "Read MCP source code.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Name of the server to read (without .py extension)."}
-                    },
+                    "properties": {"name": {"type": "string", "description": "without .py"}},
                     "required": ["name"]
-                }
-            },
-            {
-                "name": "edit_mcp_server",
-                "description": "Edit/Overwrite an existing MCP server file in the 'workspace' directory and restart it.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Name of the server to edit (without .py extension)."},
-                        "code": {"type": "string", "description": "The new full Python code for the MCP server."}
-                    },
-                    "required": ["name", "code"]
                 }
             }
         ]
@@ -521,3 +524,33 @@ class MCPManager:
     def get_active_server_names(self) -> List[str]:
         """Returns a list of currently active server names."""
         return list(self.active_servers.keys())
+
+    def get_tools_compact(self) -> tuple[str, str]:
+        """
+        ツール情報をコンパクトな文字列で返す。
+        Returns (core_tools_str, user_tools_str)
+        """
+        tools_cat = self.get_tools_categorized()
+        
+        def format_tools(tools: list) -> str:
+            if not tools:
+                return "(none)"
+            lines = []
+            for t in tools:
+                props = t.get("inputSchema", {}).get("properties", {})
+                # 引数名と説明を含める
+                args_parts = []
+                for arg_name, arg_info in props.items():
+                    desc = arg_info.get("description", "")
+                    if desc:
+                        args_parts.append(f"{arg_name}:{desc}")
+                    else:
+                        args_parts.append(arg_name)
+                args_str = ", ".join(args_parts) if args_parts else ""
+                lines.append(f"- {t['server']}.{t['name']}({args_str}): {t['description']}")
+            return "\n".join(lines)
+        
+        core_str = format_tools(tools_cat["core"])
+        user_str = format_tools(tools_cat["user"])
+        
+        return core_str, user_str

@@ -322,11 +322,11 @@ class GameAgent:
             await self.shutdown()
 
 # Helper function to get input via dashboard (blocking)
-def get_user_input_via_dashboard(prompt: str) -> str:
+def get_user_input_via_dashboard(prompt: str, options: Optional[List[str]] = None) -> str:
     from dashboard import request_user_input, get_submitted_input
     
     logger.debug(f"Waiting for user input via Dashboard: '{prompt}'")
-    request_user_input(prompt)
+    request_user_input(prompt, options)
     
     while True:
         val = get_submitted_input()
@@ -358,7 +358,28 @@ if __name__ == "__main__":
     checkpoint_path = os.path.join(history_dir, "agent_checkpoint.json")
     has_checkpoint = os.path.exists(checkpoint_path)
 
-    should_resume = args.resume or (not initial_task and has_checkpoint)
+    should_resume = args.resume
+
+    # If we have history and didn't explicitly ask to resume or start a new task, prompt the user
+    if has_checkpoint and not args.resume and not initial_task:
+        logger.info("Found existing history.")
+        # Ask via Dashboard
+        user_choice = get_user_input_via_dashboard(
+            "Found existing history. Resume?", 
+            options=["Resume", "Start Fresh"]
+        )
+        
+        # Check against button values
+        if user_choice and user_choice.lower() in ["resume", "yes", "y", "true", "1"]:
+            should_resume = True
+        else:
+            should_resume = False
+            logger.info("User chose to start from scratch. Clearing checkpoint.")
+            try:
+                if os.path.exists(checkpoint_path):
+                    os.remove(checkpoint_path)
+            except Exception as e:
+                logger.error(f"Failed to clear checkpoint: {e}")
 
     if not initial_task and not should_resume:
         logger.info("=== LLM Gamer Agent ===")

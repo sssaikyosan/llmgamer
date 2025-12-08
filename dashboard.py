@@ -40,6 +40,7 @@ class DashboardState:
         # User Input Handling
         self.waiting_for_input: bool = False
         self.input_prompt: str = ""
+        self.input_options: Optional[list] = None
         self.last_user_input: Optional[str] = None
 
 state = DashboardState()
@@ -61,10 +62,11 @@ def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=N
         elif error is False: # Explicit clear
             state.error = None
 
-def request_user_input(prompt: str):
+def request_user_input(prompt: str, options: Optional[list] = None):
     with state._lock:
         state.waiting_for_input = True
         state.input_prompt = prompt
+        state.input_options = options
         state.last_user_input = None  # Reset previous input
 
 def get_submitted_input() -> Optional[str]:
@@ -74,6 +76,7 @@ def get_submitted_input() -> Optional[str]:
             # Reset state after reading
             state.waiting_for_input = False
             state.input_prompt = ""
+            state.input_options = None
             state.last_user_input = None
             return input_val
         return None
@@ -102,6 +105,7 @@ async def get_state():
             # Input State
             "waiting_for_input": state.waiting_for_input,
             "input_prompt": state.input_prompt,
+            "input_options": state.input_options,
             
             # Error State
             "error": state.error

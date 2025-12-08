@@ -15,7 +15,7 @@ from mcp_manager import MCPManager
 from memory_manager import MemoryManager
 from llm_client import LLMClient, LLMError
 from utils.vision import capture_screenshot
-from prompts import get_system_prompt, get_user_turn_prompt
+from prompts import get_system_instruction, get_context_prompt
 from agent_state import AgentState
 
 from config import Config
@@ -33,7 +33,11 @@ class GameAgent:
         self.mcp_manager = MCPManager()
         self.memory_manager = MemoryManager()
         # Removed duplicate init lines
-        self.llm_client = LLMClient(provider=Config.LLM_PROVIDER, model_name=Config.get_model_name())
+        self.llm_client = LLMClient(
+            provider=Config.LLM_PROVIDER, 
+            model_name=Config.get_model_name(),
+            system_instruction=get_system_instruction()
+        )
         self.state = AgentState(max_history=Config.MAX_HISTORY)
         
         # Initialize memory with initial task if provided and empty
@@ -121,32 +125,31 @@ class GameAgent:
         current_time_str = self.state.get_current_time_str(timestamp)
         
         # Get compact tool descriptions for System Prompt
+        # Get compact tool descriptions
         core_desc, user_desc = self.mcp_manager.get_tools_compact()
+        tools_str = f"{core_desc}\n{user_desc}"
         
-        # 1. System Prompt (Dynamic part of system instructions)
-        system_prompt = get_system_prompt(core_desc, user_desc, memory_str, max_history=self.state.max_history)
+        # 1. Context Prompt (Dynamic info + Current Turn) -> Sent to LLM this turn
+        context_prompt = get_context_prompt(tools_str, memory_str, current_time_str)
         
-        # 2. User Turn Prompt
-        user_prompt = get_user_turn_prompt(
-            current_time=current_time_str
-        )
+        # 2. History Prompt (Only Time) -> Saved to history for next turns
+        history_prompt = f"[{current_time_str}] Next action?"
         
-        # Construct Messages for LLM
-        # We prepend the system prompt as the first user message
-        # Limit history to the last 'max_history' turns (user + assistant = 2 messages per turn)
+        # Construct History for LLM (Pure history without system/tools info)
         history_limit = self.state.max_history * 2
-        recent_messages = self.state.messages[-history_limit:] if history_limit > 0 else self.state.messages
-        messages_to_send = [{"role": "user", "content": system_prompt}] + recent_messages
+        messages_to_send = self.state.messages[-history_limit:] if history_limit > 0 else self.state.messages
+        # Note: system_instruction is handled by LLMClient init
         
         # Current input images
         current_inputs = [current_img] if current_img else []
 
         # Generate Response via LLMClient
-        response = await self.llm_client.generate_response(user_prompt, current_inputs, messages=messages_to_send)
+        # We pass context_prompt as the current user message
+        response = await self.llm_client.generate_response(context_prompt, current_inputs, messages=messages_to_send)
         
         if response:
-             # Add the User's turn to history (TEXT ONLY)
-             self.state.add_message("user", user_prompt)
+             # Add the User's turn to history (Clean version)
+             self.state.add_message("user", history_prompt)
              
              # Add the Model's response to history
              # Note: response might now contain _thought, we should remove it before storing to history if we don't want to bloat it?

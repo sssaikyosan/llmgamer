@@ -1,17 +1,24 @@
 from config import Config
 
-def get_system_prompt(core_desc: str, user_desc: str, memory_str: str, max_history: int = 10) -> str:
-    return f"""Game AI Agent. Screen → Tools.
+def get_system_instruction() -> str:
+    """
+    固定のシステム指示（Gemini system_instruction用）。
+    API呼び出し時に一度だけ設定される。
+    """
+    return """Game AI Agent. Screen → Tools.
 
-TOOLS:
-{core_desc}
-{user_desc}
+JSON: {"thought":"...","action_type":"CALL_TOOL"|"WAIT","server_name":"...","tool_name":"...","args":{}}
+"""
+
+def get_context_prompt(tools_str: str, memory_str: str, current_time: str) -> str:
+    """
+    動的コンテキスト + 現在のターンプロンプト。
+    ユーザーメッセージとして毎ターン送信される。
+    """
+    return f"""TOOLS:
+{tools_str}
 
 MEMORY:
 {memory_str}
 
-JSON: {{"thought":"...","action_type":"CALL_TOOL"|"WAIT","server_name":"...","tool_name":"...","args":{{}}}}
-"""
-
-def get_user_turn_prompt(current_time: str, visual_context_str: str = "") -> str:
-    return f"[{current_time}] Next action?"
+[{current_time}] Next action?"""

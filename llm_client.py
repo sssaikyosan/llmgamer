@@ -14,7 +14,7 @@ class LLMError(Exception):
 
 
 class LLMClient:
-    def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview"):
+    def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview", system_instruction: str = None):
         self.provider = provider
         self.api_key = Config.API_KEY
         self.model_name = model_name
@@ -27,7 +27,11 @@ class LLMClient:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel(self.model_name)
+                # Initialize with system_instruction if provided
+                if system_instruction:
+                    self.model = genai.GenerativeModel(self.model_name, system_instruction=system_instruction)
+                else:
+                    self.model = genai.GenerativeModel(self.model_name)
                 logger.info(f"LLM Client initialized for Gemini model: {self.model_name}")
             except ImportError:
                 logger.critical("google-generativeai package not installed.")

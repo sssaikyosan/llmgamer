@@ -1,14 +1,55 @@
 import os
 import re
 import json
+import time
+from collections import deque
 from config import Config
 from typing import List, Dict, Any, Optional
+
+class RateLimiter:
+    def __init__(self, rpm: int, rpd: int):
+        self.rpm = rpm
+        self.rpd = rpd
+        self.requests_min = deque()
+        self.requests_day = deque()
+
+    def wait_for_slot(self):
+        current_time = time.time()
+        
+        # Clean up old timestamps
+        while self.requests_min and current_time - self.requests_min[0] > 60:
+            self.requests_min.popleft()
+        while self.requests_day and current_time - self.requests_day[0] > 86400:
+            self.requests_day.popleft()
+            
+        # Check limits
+        if len(self.requests_min) >= self.rpm:
+            sleep_time = 60 - (current_time - self.requests_min[0]) + 1
+            if sleep_time > 0:
+                print(f"Rate limit (RPM) reached. Sleeping for {sleep_time:.2f}s...")
+                time.sleep(sleep_time)
+                # Re-check/Reset time after sleep
+                self.wait_for_slot()
+                return
+
+        if len(self.requests_day) >= self.rpd:
+            print("Rate limit (RPD) reached. Waiting...")
+            time.sleep(60) 
+            self.wait_for_slot()
+            return
+            
+        # Add current request
+        self.requests_min.append(time.time())
+        self.requests_day.append(time.time())
 
 class LLMClient:
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview"):
         self.provider = provider
         self.api_key = Config.API_KEY
         self.model_name = model_name
+        
+        # Rate Limiter
+        self.rate_limiter = RateLimiter(Config.GEMINI_RPM, Config.GEMINI_RPD)
         
         if not self.api_key:
             print("WARNING: No API_KEY found.")
@@ -21,7 +62,7 @@ class LLMClient:
             except ImportError:
                 print("Error: google-generativeai package not installed.")
                 self.model = None
-            self.model = None
+            # Removed erroneous self.model = None line here
         elif self.provider == "lmstudio":
             self.base_url = Config.LMSTUDIO_BASE_URL
             print(f"LLM Client initialized for LM Studio at {self.base_url}")
@@ -34,6 +75,10 @@ class LLMClient:
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
     async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Optional[Dict[str, Any]]:
+        # Enforce rate limits before any request attempt
+        if self.provider == "gemini":
+            self.rate_limiter.wait_for_slot()
+
         if self.provider == "gemini" and self.model:
             try:
                 if messages:
@@ -64,6 +109,12 @@ class LLMClient:
                     # Current turn input
                     inputs = [prompt] + images
                     response = chat.send_message(inputs)
+                    
+                    # Handle safety blocks or empty responses gracefully
+                    if not response.parts:
+                        print(f"LLM Warning: No parts returned. Finish reason: {response.candidates[0].finish_reason}")
+                        return None
+                        
                     return self._parse_response(response.text)
                 
                 else:
@@ -91,20 +142,10 @@ class LLMClient:
                         role = msg["role"]
                         content = msg["content"]
                         
-                        # Handle image content in history if needed, though LM Studio might not support history images well yet?
-                        # For now, let's simplify and just pass text for history, or use the last image only.
-                        # Actually standard OpenAI format supports content as list of dicts.
-                        
                         m_content = []
                         if isinstance(content, str):
                             m_content = content
                         elif isinstance(content, list):
-                            # Try to preserve structure if it's already list of text/image
-                            # But we need to ensure images are serializable (base64 or url)
-                            # AgentState stores images as PIL objects in memory messages, 
-                            # so we need to convert them here if we want to send history images.
-                            # For saving tokens/bandwidth, maybe we skip old images in history?
-                            # Let's filter out images from history for now, unless it's critical.
                             text_parts = []
                             for item in content:
                                 if isinstance(item, str):
@@ -166,8 +207,7 @@ class LLMClient:
             return None
 
     def _parse_response(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse LLM response handling <think> tags and markdown code blocks."""
-        # Simply remove <think> blocks
+        # Remove <think> blocks for JSON parsing
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         
         text = re.sub(r'```json\s*', '', text)
@@ -175,13 +215,15 @@ class LLMClient:
         text = text.strip()
         
         try:
-            return json.loads(text)
+            data = json.loads(text)
+            return data
         except json.JSONDecodeError as e:
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1:
                 try:
-                    return json.loads(text[start:end+1])
+                    data = json.loads(text[start:end+1])
+                    return data
                 except:
                     pass
             print(f"Failed to parse JSON: {text}\nError: {e}")

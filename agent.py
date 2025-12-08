@@ -159,7 +159,7 @@ class GameAgent:
             os.makedirs(history_dir)
             
         filepath = os.path.join(history_dir, filename)
-        print(f"Saving checkpoint to {filepath}...")
+        # print(f"Saving checkpoint to {filepath}...")
         
         data = {
             "memory_manager": self.memory_manager.memories,
@@ -169,7 +169,7 @@ class GameAgent:
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            print("Checkpoint saved.")
+            # print("Checkpoint saved.")
         except Exception as e:
             print(f"Failed to save checkpoint: {e}")
 
@@ -277,7 +277,14 @@ if __name__ == "__main__":
     # If resuming, we might not need an initial task, but if one is provided it overrides?
     # Usually resume implies continuing old task.
     # If no task and no resume, ask user.
-    if not initial_task and not args.resume:
+    # Check if checkpoint exists to decide on auto-resume
+    history_dir = "history"
+    checkpoint_path = os.path.join(history_dir, "agent_checkpoint.json")
+    has_checkpoint = os.path.exists(checkpoint_path)
+
+    should_resume = args.resume or (not initial_task and has_checkpoint)
+
+    if not initial_task and not should_resume:
         print("\n=== LLM Gamer Agent ===")
         initial_task = input("Enter the task you want the agent to perform: ").strip()
         if not initial_task:
@@ -289,4 +296,4 @@ if __name__ == "__main__":
     print(f"\nStarting agent...\n")
     
     agent = GameAgent(initial_task=initial_task if initial_task else "Resume Task")
-    asyncio.run(agent.run_loop(resume=args.resume))
+    asyncio.run(agent.run_loop(resume=should_resume))

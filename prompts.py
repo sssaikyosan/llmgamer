@@ -12,6 +12,21 @@ User Tools: {user_desc}
 3. Restrictions: NO terminal commands. NO installing new libraries.
 4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time, easyocr}}.
 
+[MCP CREATION RULES]
+When creating new tools via 'create_mcp_server', you MUST adhere to these technical standards:
+1. **Library**: Use `from mcp.server.fastmcp import FastMCP`.
+2. **Initialization**: Initialize with `mcp = FastMCP("server_name")`.
+3. **Tools**: Use the `@mcp.tool()` decorator for all exposed functions.
+4. **Type Hints**: ALL arguments must have Python type hints (e.g., `x: int`, `name: str`).
+5. **Docstrings**: ALL tools must have a detailed docstring explaining inputs and purpose.
+6. **Entry Point**: The file MUST end with:
+   ```python
+   if __name__ == "__main__":
+       mcp.run()
+   ```
+7. **Dependencies**: Do NOT import external libraries outside the allowed list (see Rule 4).
+8. **Error Handling**: Wrap logic in try/except blocks and return clear error messages as strings if something fails.
+
 Analyze the situation and Output JSON ONLY:
 {{
     "thought": "Reasoning...",

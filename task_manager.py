@@ -56,3 +56,24 @@ class TaskManager:
                 summary += f"  - {h}\n"
                 
         return summary
+    
+    def to_dict(self) -> dict:
+        return {
+            "main_task": self.main_task,
+            "sub_tasks": [{"id": t.id, "description": t.description, "status": t.status} for t in self.sub_tasks],
+            "completed_history": self.completed_history,
+            "id_counter": self._id_counter
+        }
+
+    def from_dict(self, data: dict):
+        self.main_task = data.get("main_task", self.main_task)
+        self.completed_history = data.get("completed_history", [])
+        self._id_counter = data.get("id_counter", 1)
+        
+        self.sub_tasks = []
+        for t_data in data.get("sub_tasks", []):
+            self.sub_tasks.append(SubTask(
+                id=t_data["id"],
+                description=t_data["description"], 
+                status=t_data.get("status", "pending")
+            ))

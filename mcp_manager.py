@@ -440,3 +440,7 @@ class MCPManager:
         keys = list(self.active_servers.keys())
         for key in keys:
             await self.stop_server(key)
+
+    def get_active_server_names(self) -> List[str]:
+        """Returns a list of currently active server names."""
+        return list(self.active_servers.keys())

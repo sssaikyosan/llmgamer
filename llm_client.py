@@ -85,10 +85,40 @@ class LLMClient:
                 import urllib.request
                 import json
                 
-                messages = []
+                messages_payload = []
+                
+                # Add history if provided
+                if messages:
+                    for msg in messages:
+                        role = msg["role"]
+                        content = msg["content"]
+                        
+                        # Handle image content in history if needed, though LM Studio might not support history images well yet?
+                        # For now, let's simplify and just pass text for history, or use the last image only.
+                        # Actually standard OpenAI format supports content as list of dicts.
+                        
+                        m_content = []
+                        if isinstance(content, str):
+                            m_content = content
+                        elif isinstance(content, list):
+                            # Try to preserve structure if it's already list of text/image
+                            # But we need to ensure images are serializable (base64 or url)
+                            # AgentState stores images as PIL objects in memory messages, 
+                            # so we need to convert them here if we want to send history images.
+                            # For saving tokens/bandwidth, maybe we skip old images in history?
+                            # Let's filter out images from history for now, unless it's critical.
+                            text_parts = []
+                            for item in content:
+                                if isinstance(item, str):
+                                    text_parts.append(item)
+                            m_content = "\n".join(text_parts)
+                        
+                        messages_payload.append({"role": role, "content": m_content})
+
+                # Current turn content
                 content = [{"type": "text", "text": prompt}]
                 
-                # Process images
+                # Process images for current turn
                 for img in images:
                     base64_img = self._pil_to_base64(img)
                     content.append({
@@ -96,14 +126,14 @@ class LLMClient:
                         "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
                     })
                 
-                messages = [{"role": "user", "content": content}]
+                messages_payload.append({"role": "user", "content": content})
                 
                 # Ensure model name is safe
                 use_model = self.model_name if self.model_name else "local-model"
 
                 payload = {
                     "model": use_model, 
-                    "messages": messages,
+                    "messages": messages_payload,
                     "stream": False
                 }
                 
@@ -139,11 +169,8 @@ class LLMClient:
 
     def _parse_response(self, text: str) -> Optional[Dict[str, Any]]:
         """Parse LLM response handling <think> tags and markdown code blocks."""
-        think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
-        if think_match:
-            thought_content = think_match.group(1).strip()
-            print(f"\n=== Model Thought ===\n{thought_content}\n=====================\n")
-            text = text.replace(think_match.group(0), "")
+        # Simply remove <think> blocks
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         
         text = re.sub(r'```json\s*', '', text)
         text = re.sub(r'```\s*', '', text)
@@ -151,7 +178,7 @@ class LLMClient:
         
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1:
@@ -159,5 +186,5 @@ class LLMClient:
                     return json.loads(text[start:end+1])
                 except:
                     pass
-            print(f"Failed to parse JSON: {text}")
+            print(f"Failed to parse JSON: {text}\nError: {e}")
             return None

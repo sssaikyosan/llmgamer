@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import os
 import sys
 import json
@@ -79,6 +80,7 @@ class GameAgent:
 
     async def execute_tool(self, server_name: str, tool_name: str, args: Dict[str, Any]):
         logger.debug(f"Executing: {server_name}.{tool_name} with {args}")
+        output = ""
         try:
             result = await self.mcp_manager.call_tool(server_name, tool_name, args)
             
@@ -95,14 +97,15 @@ class GameAgent:
 
             logger.debug(f"Result: {output[:200]}..." if len(output) > 200 else f"Result: {output}")
             
-            # Update Dashboard with tool log
-            update_dashboard_state(tool_log=f"Executed {server_name}.{tool_name}\nArgs: {args}\nResult: {output}")
-
-            return output
         except Exception as e:
-            error_msg = f"Error executing tool: {e}"
-            logger.error(error_msg)
-            return error_msg
+            output = f"Error executing tool: {e}"
+            logger.error(output)
+            
+        # Update Dashboard with tool log (timestamped)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        update_dashboard_state(tool_log=f"[{timestamp}] Executed {server_name}.{tool_name}\nArgs: {args}\nResult: {output}")
+
+        return output
 
     async def think(self, screenshot_base64: str, timestamp: float) -> Optional[Dict[str, Any]]:
         logger.debug("Thinking...")
@@ -152,13 +155,8 @@ class GameAgent:
              self.state.add_message("user", history_prompt)
              
              # Add the Model's response to history
-             # Note: response might now contain _thought, we should remove it before storing to history if we don't want to bloat it?
-             # Or keep it. Let's keep it clean for the history log.
-             response_to_store = response.copy()
-             if "_thought" in response_to_store:
-                 del response_to_store["_thought"]
-
-             self.state.add_message("assistant", json.dumps(response_to_store))
+             # ユーザーの要望により、thought（思考のまとめ）も履歴に含める
+             self.state.add_message("assistant", json.dumps(response))
              
         return response
 

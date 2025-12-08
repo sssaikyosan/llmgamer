@@ -186,12 +186,6 @@ class LLMClient:
             raise LLMError(f"プロバイダー '{self.provider}' は実装されていないか、初期化されていません。")
 
     def _parse_response(self, text: str) -> Dict[str, Any]:
-        # Extract <think> content
-        thought = None
-        think_match = re.search(r'<think>(.*?)</think>', text, flags=re.DOTALL)
-        if think_match:
-            thought = think_match.group(1).strip()
-
         # Remove <think> blocks for JSON parsing
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         
@@ -201,18 +195,25 @@ class LLMClient:
         
         try:
             data = json.loads(text)
-            if thought:
-                data["_thought"] = thought
             return data
         except json.JSONDecodeError as e:
+            # Try to find JSON object in text
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1:
                 try:
                     data = json.loads(text[start:end+1])
-                    if thought:
-                        data["_thought"] = thought
                     return data
                 except json.JSONDecodeError:
                     pass
-            raise LLMError(f"JSONパースエラー: {e}\nレスポンス: {text[:500]}")
+            
+            # Fallback for non-JSON responses (e.g. plain text or code)
+            logger.warning(f"JSON parse failed. Treating response as raw text. Error: {e}")
+            
+            # Construct a fallback response object
+            fallback_data = {
+                "thought": text,  # Treat the raw text as the thought/content
+                "action_type": "WAIT",
+            }
+            
+            return fallback_data

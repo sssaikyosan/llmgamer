@@ -33,11 +33,6 @@ Model Context Protocol (MCP) アーキテクチャを採用しており、エー
     ```
 4.  環境変数を設定します。
     `.env.example` をコピーして `.env` という名前のファイルを作成し、エディタで開いてAPIキーを設定してください。
-    ```ini
-    GOOGLE_API_KEY=your_api_key_here
-    MODEL_NAME=gemini-2.0-flash-exp
-    # その他必要な設定があれば記述
-    ```
 
 ## 使い方
 
@@ -59,7 +54,7 @@ python agent.py
 
 エージェント起動後、Webブラウザで以下のURLにアクセスしてください。
 
-**URL**: [http://localhost:15000](http://localhost:15000)
+**URL**: [http://localhost:15000]
 
 ダッシュボードの構成：
 *   **Live Vision**: エージェントが見ている現在の画面。

@@ -1,21 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM Gamer Agent Brain</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
     <style>
         :root {
             --bg-color: #09090b;
             --panel-bg: #18181b;
             --text-color: #e4e4e7;
-            --accent-color: #3b82f6; /* Blue-500 */
+            --accent-color: #3b82f6;
+            /* Blue-500 */
             --border-color: #27272a;
-            --thought-color: #10b981; /* Emerald-500 */
-            --log-color: #f59e0b; /* Amber-500 */
+            --thought-color: #10b981;
+            /* Emerald-500 */
+            --log-color: #f59e0b;
+            /* Amber-500 */
             --header-text: #a1a1aa;
         }
+
         body {
             font-family: 'Inter', sans-serif;
             background-color: var(--bg-color);
@@ -29,6 +36,7 @@
             height: 95vh;
             overflow: hidden;
         }
+
         .panel {
             background-color: var(--panel-bg);
             border: 1px solid var(--border-color);
@@ -39,6 +47,7 @@
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             overflow: hidden;
         }
+
         h2 {
             margin-top: 0;
             border-bottom: 1px solid var(--border-color);
@@ -53,6 +62,7 @@
             align-items: center;
             gap: 10px;
         }
+
         h2::before {
             content: '';
             display: inline-block;
@@ -61,7 +71,7 @@
             background-color: var(--accent-color);
             border-radius: 50%;
         }
-        
+
         /* Screen Panel */
         #screen-panel {
             grid-column: 1 / 2;
@@ -72,13 +82,14 @@
             justify-content: center;
             align-items: center;
         }
+
         #screen-img {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
             border-radius: 4px;
         }
-        
+
         /* Memory Panel */
         #memory-panel {
             grid-column: 2 / 3;
@@ -90,7 +101,7 @@
             grid-column: 1 / 2;
             grid-row: 2 / 3;
         }
-        
+
         /* Log Panel */
         #log-panel {
             grid-column: 2 / 3;
@@ -100,12 +111,13 @@
         .content-area {
             font-family: 'JetBrains Mono', monospace;
             white-space: pre-wrap;
-            background: #0e0e10; 
+            background: #0e0e10;
             padding: 15px;
             border-radius: 6px;
             overflow-y: auto;
             flex: 1;
-            font-size: 0.95rem; /* Larger font */
+            font-size: 0.95rem;
+            /* Larger font */
             line-height: 1.6;
             border: 1px solid #1f2937;
         }
@@ -113,11 +125,12 @@
         #thought-content {
             color: var(--thought-color);
         }
-        
+
         #log-content {
-            color: var(--text-color); /* Default text color for logs */
+            color: var(--text-color);
+            /* Default text color for logs */
         }
-        
+
         /* Specific styling for log parts if needed */
 
         /* Lists for Memory */
@@ -126,37 +139,43 @@
             padding: 0;
             margin: 0;
         }
+
         li {
             padding: 12px;
             border-bottom: 1px solid var(--border-color);
             font-size: 0.9rem;
         }
+
         li:last-child {
             border-bottom: none;
         }
+
         .memory-key {
             font-weight: 700;
             color: var(--accent-color);
             display: block;
             margin-bottom: 4px;
         }
-        
+
         /* Scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
             height: 8px;
         }
+
         ::-webkit-scrollbar-track {
-            background: var(--bg-color); 
+            background: var(--bg-color);
         }
+
         ::-webkit-scrollbar-thumb {
-            background: #3f3f46; 
+            background: #3f3f46;
             border-radius: 4px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
-            background: #52525b; 
+            background: #52525b;
         }
-        
+
         /* Connection Status */
         #status-indicator {
             position: absolute;
@@ -165,19 +184,23 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            background-color: #ef4444; /* Red */
+            background-color: #ef4444;
+            /* Red */
             z-index: 100;
             box-shadow: 0 0 10px #ef4444;
             transition: background-color 0.3s;
         }
+
         #status-indicator.connected {
-            background-color: #22c55e; /* Green */
+            background-color: #22c55e;
+            /* Green */
             box-shadow: 0 0 10px #22c55e;
         }
-        
+
         /* Input Modal */
         #input-modal {
-            display: none; /* Hidden by default */
+            display: none;
+            /* Hidden by default */
             position: fixed;
             top: 0;
             left: 0;
@@ -188,10 +211,30 @@
             justify-content: center;
             align-items: center;
         }
+
         #input-modal.active {
             display: flex;
         }
-        
+
+        /* Generic Modal Class for shared styles if needed, but keeping separate for now */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            z-index: 2000;
+            /* Higher than input modal */
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
         .modal-content {
             background-color: var(--panel-bg);
             border: 1px solid var(--border-color);
@@ -201,14 +244,14 @@
             max-width: 90%;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
         }
-        
+
         .modal-title {
             font-size: 1.2rem;
             font-weight: 700;
             margin-bottom: 20px;
             color: var(--text-color);
         }
-        
+
         #input-field {
             width: 100%;
             padding: 12px;
@@ -221,12 +264,12 @@
             margin-bottom: 20px;
             box-sizing: border-box;
         }
-        
+
         #input-field:focus {
             outline: none;
             border-color: var(--accent-color);
         }
-        
+
         #submit-btn {
             background-color: var(--accent-color);
             color: white;
@@ -239,15 +282,16 @@
             font-size: 1rem;
             transition: background-color 0.2s;
         }
-        
-        #submit-btn:hover {
-            background-color: #2563eb; /* Blue-600 */
-        }
 
+        #submit-btn:hover {
+            background-color: #2563eb;
+            /* Blue-600 */
+        }
     </style>
 </head>
+
 <body>
-    
+
     <!-- Input Modal -->
     <div id="input-modal">
         <div class="modal-content">
@@ -257,12 +301,24 @@
         </div>
     </div>
 
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content" style="border-color: #ef4444;">
+            <div class="modal-title" style="color: #ef4444;">Agent Error</div>
+            <div id="error-content"
+                style="white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text-color); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; margin-bottom: 20px;">
+            </div>
+            <div style="font-size: 0.8rem; color: #71717a;">The agent has encountered an error and stopped. Check the
+                console for more details.</div>
+        </div>
+    </div>
+
     <!-- Row 1: Screen & Memory -->
     <div id="screen-panel" class="panel">
         <div id="status-indicator" title="Disconnected"></div>
         <img id="screen-img" src="" alt="Live Feed - Waiting for Agent...">
     </div>
-    
+
     <div id="memory-panel" class="panel">
         <div class="content-area" id="memory-list" style="background: transparent; border: none; padding: 0;"></div>
     </div>
@@ -271,7 +327,7 @@
     <div id="thought-panel" class="panel">
         <div id="thought-content" class="content-area">Waiting for thoughts...</div>
     </div>
-    
+
     <div id="log-panel" class="panel">
         <div id="log-content" class="content-area">Waiting for tool execution...</div>
     </div>
@@ -282,14 +338,14 @@
         const modalPrompt = document.getElementById('modal-prompt');
         const inputField = document.getElementById('input-field');
         const submitBtn = document.getElementById('submit-btn');
-        
+
         let isInputModalActive = false;
-        
+
         // Submit handler
         function submitInput() {
             const val = inputField.value;
             if (!val) return;
-            
+
             fetch('/api/submit_input', {
                 method: 'POST',
                 headers: {
@@ -297,20 +353,20 @@
                 },
                 body: JSON.stringify({ text: val }),
             })
-            .then(res => res.json())
-            .then(data => {
-                inputField.value = '';
-                inputModal.classList.remove('active');
-                isInputModalActive = false;
-            })
-            .catch(err => console.error('Error submitting input:', err));
+                .then(res => res.json())
+                .then(data => {
+                    inputField.value = '';
+                    inputModal.classList.remove('active');
+                    isInputModalActive = false;
+                })
+                .catch(err => console.error('Error submitting input:', err));
         }
 
         submitBtn.addEventListener('click', submitInput);
         inputField.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') submitInput();
         });
-        
+
         function updateState() {
             fetch('/api/state')
                 .then(response => {
@@ -327,46 +383,46 @@
                     if (data.screenshot) {
                         document.getElementById('screen-img').src = 'data:image/jpeg;base64,' + data.screenshot;
                     }
-                    
+
                     // Update Thought
                     if (data.thought) {
                         const thoughtEl = document.getElementById('thought-content');
                         if (thoughtEl.getAttribute('data-last') !== data.thought) {
-                             thoughtEl.textContent = data.thought;
-                             thoughtEl.setAttribute('data-last', data.thought);
-                             thoughtEl.scrollTop = thoughtEl.scrollHeight;
+                            thoughtEl.textContent = data.thought;
+                            thoughtEl.setAttribute('data-last', data.thought);
+                            thoughtEl.scrollTop = thoughtEl.scrollHeight;
                         }
                     }
-                    
+
                     // Update Tool Log
                     if (data.tool_log) {
                         const logEl = document.getElementById('log-content');
                         if (logEl.innerText !== data.tool_log) {
-                             logEl.innerText = data.tool_log;
-                             logEl.scrollTop = logEl.scrollHeight;
+                            logEl.innerText = data.tool_log;
+                            logEl.scrollTop = logEl.scrollHeight;
                         }
                     }
 
                     // Update Memories
                     const memList = document.getElementById('memory-list');
                     if (data.memories) {
-                         const fragment = document.createDocumentFragment();
-                         const ul = document.createElement('ul');
-                         
-                         if (Object.keys(data.memories).length === 0) {
-                             ul.innerHTML = '<li style="color: #52525b; font-style: italic;">No active memories</li>';
-                         } else {
+                        const fragment = document.createDocumentFragment();
+                        const ul = document.createElement('ul');
+
+                        if (Object.keys(data.memories).length === 0) {
+                            ul.innerHTML = '<li style="color: #52525b; font-style: italic;">No active memories</li>';
+                        } else {
                             for (const [key, value] of Object.entries(data.memories)) {
                                 const li = document.createElement('li');
                                 li.innerHTML = `<span class="memory-key">${key}</span>${value}`;
                                 ul.appendChild(li);
                             }
-                         }
-                         fragment.appendChild(ul);
-                         memList.innerHTML = '';
-                         memList.appendChild(fragment);
+                        }
+                        fragment.appendChild(ul);
+                        memList.innerHTML = '';
+                        memList.appendChild(fragment);
                     }
-                    
+
                     // Handle Input Request
                     if (data.waiting_for_input && !isInputModalActive) {
                         isInputModalActive = true;
@@ -377,6 +433,16 @@
                         // Dismiss if no longer waiting (agent cancelled or handled)
                         isInputModalActive = false;
                         inputModal.classList.remove('active');
+                    }
+
+                    // Handle Error
+                    const errorModal = document.getElementById('error-modal');
+                    const errorContent = document.getElementById('error-content');
+                    if (data.error) {
+                        errorContent.textContent = data.error;
+                        errorModal.classList.add('active');
+                    } else {
+                        errorModal.classList.remove('active');
                     }
                 })
                 .catch(err => {
@@ -390,4 +456,5 @@
         updateState();
     </script>
 </body>
+
 </html>

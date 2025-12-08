@@ -235,12 +235,32 @@ class GameAgent:
 
                 screenshot, timestamp = await self.get_screenshot()
                 
-                # Update Dashboard with new screenshot
+                # Update Dashboard with new screenshot (keep previous thought until new one arrives)
                 update_dashboard_state(screenshot=screenshot)
                 
                 decision = await self.think(screenshot, timestamp)
                 
                 if decision:
+                    # Normalize LLM output if it deviated from spec (e.g. {"action": "server.tool", "arguments": ...})
+                    if "action" in decision and "action_type" not in decision:
+                        decision["action_type"] = "CALL_TOOL"
+                        if "arguments" in decision:
+                            decision["args"] = decision["arguments"]
+                        
+                        if "." in decision["action"]:
+                            parts = decision["action"].split(".", 1)
+                            decision["server_name"] = parts[0]
+                            decision["tool_name"] = parts[1]
+                        else:
+                             # Handle case where server is implicit or missing
+                             decision["tool_name"] = decision["action"] 
+                             # We can't easily guess server, but maybe it works if tools are unique? 
+                             # For now, let's just leave server_name missing or Handle it in execute?
+                             # Let's try to map it from known tools? Too complex for now.
+                             # If it's a meta tool, it's likely safe to guess.
+                             if decision["action"] in ["create_mcp_server", "edit_mcp_server", "delete_mcp_server", "list_mcp_files", "read_mcp_code"]:
+                                 decision["server_name"] = "meta_manager"
+                    
                     thought = decision.get("_thought", decision.get("thought", "No thought"))
                     action_type = decision.get("action_type")
                     logger.info(f"Thought: {thought}")
@@ -284,10 +304,22 @@ class GameAgent:
         except KeyboardInterrupt:
             logger.info("Stopping agent...")
             self.save_checkpoint() # Save on exit too
-        except LLMError as e:
-            logger.error(f"LLM Error - Agent Stopped: {e}")
-            logger.error("エージェントを停止します。")
+        except Exception as e:
+            # Catch LLMError and any other unexpected exceptions
+            error_msg = f"Agent Error: {e}"
+            logger.error(error_msg)
+            
+            # Show error on dashboard
+            update_dashboard_state(error=str(e))
             self.save_checkpoint()
+            
+            # Keep process alive so dashboard can display the error
+            logger.error("Agent stopped due to error. Dashboard is still active. Press Ctrl+C to exit.")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                pass
         finally:
             await self.shutdown()
 

@@ -35,6 +35,7 @@ class DashboardState:
         self.memories: Dict[str, str] = {}
         self.tools: Dict[str, Any] = {}
         self.tool_log: str = "Waiting for tool execution..."
+        self.error: Optional[str] = None
         
         # User Input Handling
         self.waiting_for_input: bool = False
@@ -43,7 +44,7 @@ class DashboardState:
 
 state = DashboardState()
 
-def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None):
+def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None, error=None):
     with state._lock:
         if screenshot:
             state.screenshot_base64 = screenshot
@@ -55,6 +56,10 @@ def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=N
             state.tools = tools
         if tool_log:
             state.tool_log = tool_log
+        if error:
+            state.error = error
+        elif error is False: # Explicit clear
+            state.error = None
 
 def request_user_input(prompt: str):
     with state._lock:
@@ -96,7 +101,10 @@ async def get_state():
             
             # Input State
             "waiting_for_input": state.waiting_for_input,
-            "input_prompt": state.input_prompt
+            "input_prompt": state.input_prompt,
+            
+            # Error State
+            "error": state.error
         }
 
 @app.get("/", response_class=HTMLResponse)

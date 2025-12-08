@@ -4,6 +4,7 @@ mcp
 fastapi
 uvicorn
 pydantic
+fastmcp
 
 # LLM
 google-generativeai

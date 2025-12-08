@@ -263,7 +263,7 @@ class GameAgent:
                 1. Visuals: Analyze image history to verify actions and detect changes.
                 2. Workspace: All new files/tools must be in 'workspace/'.
                 3. Restrictions: NO terminal commands. NO installing new libraries.
-                4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time}}.
+                4. Libraries: Use ONLY Python standard libs + {{mss, pyautogui, pillow, cv2, numpy, psutil, pyperclip, keyboard, pydirectinput, pygetwindow, time, easyocr}}.
 
                 Analyze the situation and Output JSON ONLY:
                 {{

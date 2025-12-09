@@ -40,7 +40,7 @@ Model Context Protocol (MCP) アーキテクチャを採用しており、エー
 
     ```ini
     API_KEY=your_gemini_api_key_here
-    GEMINI_MODEL=Gemini 3-pro-preview
+    GEMINI_MODEL=gemini-3-pro-preview
     ```
 
 ## 使い方

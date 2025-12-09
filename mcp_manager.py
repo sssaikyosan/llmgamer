@@ -279,10 +279,14 @@ class MCPManager:
         asyncio.create_task(self._server_lifecycle(name, server_params, init_future))
         
         try:
-            # Wait for initialization
-            await asyncio.wait_for(init_future, timeout=5.0)
+            # Wait for initialization (increased timeout for heavy imports)
+            await asyncio.wait_for(init_future, timeout=15.0)
             
             # If we are here, init succeeded
+            # Race condition check: make sure server still exists (didn't crash immediately after init)
+            if name not in self.active_servers:
+                raise RuntimeError(f"Server {name} started but terminated immediately.")
+
             tools = [t.name for t in self.active_servers[name].tools]
             return True, f"Successfully started server {name}. Tools: {tools}"
             

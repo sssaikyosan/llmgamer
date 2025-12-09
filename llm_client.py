@@ -52,6 +52,15 @@ class LLMClient:
         self.tools = tools
         logger.debug(f"Set {len(tools)} tools for LLM client")
 
+    def _sanitize_schema(self, schema: Any) -> Any:
+        """Geminiがサポートしていないフィールド（defaultなど）をスキーマから削除する"""
+        if isinstance(schema, dict):
+            return {k: self._sanitize_schema(v) for k, v in schema.items() if k != "default"}
+        elif isinstance(schema, list):
+            return [self._sanitize_schema(v) for v in schema]
+        else:
+            return schema
+
     def _convert_tools_for_gemini(self) -> List[Dict]:
         """ツール定義をGemini形式に変換する"""
         function_declarations = []
@@ -79,7 +88,8 @@ class LLMClient:
             }
             
             # inputSchemaからparametersを構築
-            schema = tool.get("inputSchema", {})
+            # GeminiはSchema定義内の 'default' フィールドをサポートしていないため削除
+            schema = self._sanitize_schema(tool.get("inputSchema", {}))
             
             func_decl = {
                 "name": full_name,

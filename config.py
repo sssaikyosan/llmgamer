@@ -12,6 +12,7 @@ class Config:
     API_KEY = os.getenv("API_KEY")
 
     MAX_HISTORY = int(os.getenv("MAX_HISTORY", "10"))
+    MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "100"))
     
     # Service Specific Settings
     LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")

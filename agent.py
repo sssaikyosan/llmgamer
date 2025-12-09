@@ -8,6 +8,7 @@ import base64
 import io
 from typing import List, Dict, Any, Optional
 from PIL import Image
+import shutil
 
 from dotenv import load_dotenv
 
@@ -374,12 +375,28 @@ if __name__ == "__main__":
             should_resume = True
         else:
             should_resume = False
-            logger.info("User chose to start from scratch. Clearing checkpoint.")
+            logger.info("User chose to start from scratch. Clearing checkpoint and workspace.")
             try:
+                # Clear Checkpoint
                 if os.path.exists(checkpoint_path):
                     os.remove(checkpoint_path)
+                
+                # Clear Workspace
+                workspace_dir = "workspace"
+                if os.path.exists(workspace_dir):
+                    # Delete all files and dirs in workspace, but keep the workspace dir itself
+                    for filename in os.listdir(workspace_dir):
+                        file_path = os.path.join(workspace_dir, filename)
+                        try:
+                            if os.path.isfile(file_path) or os.path.islink(file_path):
+                                os.unlink(file_path)
+                            elif os.path.isdir(file_path):
+                                shutil.rmtree(file_path)
+                        except Exception as e:
+                            logger.error(f'Failed to delete {file_path}. Reason: {e}')
+                    logger.info("Workspace cleared.")
             except Exception as e:
-                logger.error(f"Failed to clear checkpoint: {e}")
+                logger.error(f"Failed to clear state: {e}")
 
     if not initial_task and not should_resume:
         logger.info("=== LLM Gamer Agent ===")

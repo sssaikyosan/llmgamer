@@ -13,6 +13,7 @@ env/
 .env
 
 # Logs and Databases
+logs/
 *.log
 *.sqlite
 

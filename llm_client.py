@@ -1,6 +1,8 @@
 
 import re
 import json
+import os
+from datetime import datetime
 from config import Config
 from typing import List, Dict, Any, Optional
 from logger import get_logger
@@ -104,7 +106,8 @@ class LLMClient:
                     if not response.parts:
                         finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
                         raise LLMError(f"レスポンスが空です。終了理由: {finish_reason}")
-                        
+                    
+                    self._log_raw_response(response.text)
                     return self._parse_response(response.text)
                 
                 else:
@@ -184,6 +187,10 @@ class LLMClient:
                     with urllib.request.urlopen(req) as response:
                         result = json.loads(response.read().decode('utf-8'))
                         text_response = result['choices'][0]['message']['content']
+                        logger.debug(f"LM Studio raw response content: {text_response[:200]}..." if text_response else "LM Studio raw response content is Empty/None")
+                        if not text_response:
+                             raise LLMError("LM Studio returned empty content.")
+                        self._log_raw_response(text_response)
                         return self._parse_response(text_response)
                 except Exception as req_err:
                     raise LLMError(f"LM Studio リクエストエラー: {req_err}")
@@ -196,28 +203,73 @@ class LLMClient:
         else:
             raise LLMError(f"プロバイダー '{self.provider}' は実装されていないか、初期化されていません。")
 
+    def _log_raw_response(self, content: str):
+        """デバッグ用に生のレスポンスをファイルに保存する。古いログは削除する。"""
+        try:
+            log_dir = "logs"
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"response_{timestamp}.txt"
+            filepath = os.path.join(log_dir, filename)
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+                
+            # Log Rotation
+            files = sorted([
+                os.path.join(log_dir, f) for f in os.listdir(log_dir) 
+                if f.startswith("response_") and f.endswith(".txt")
+            ])
+            
+            if len(files) > Config.MAX_LOG_FILES:
+                files_to_delete = files[:len(files) - Config.MAX_LOG_FILES]
+                for f in files_to_delete:
+                    try:
+                        os.remove(f)
+                    except OSError as e:
+                        logger.warning(f"Failed to delete old log {f}: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to log raw response: {e}")
+
     def _parse_response(self, text: str) -> Dict[str, Any]:
         # Remove <think> blocks for JSON parsing
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
-        text = text.strip()
+        # Strategy 1: Look for explicit ```json block
+        # Use DOTALL to match across lines, non-greedy match for the content
+        json_pattern = r'```json\s*(.*?)```'
+        match = re.search(json_pattern, text, re.DOTALL)
+        if match:
+            json_str = match.group(1).strip()
+            try:
+                data = json.loads(json_str)
+                return data
+            except json.JSONDecodeError:
+                logger.warning("Found ```json block but failed to parse content. Falling back to fuzzy search.")
+        
+        # Strategy 2: Clean all markdown blocks and try to parse the whole text or find JSON object
+        # This handles cases where user didn't use ```json or used plain text
+        clean_text = re.sub(r'```\w*\s*', '', text) # Removes ```json, ```python, etc.
+        clean_text = re.sub(r'```\s*', '', clean_text)
+        clean_text = clean_text.strip()
         
         try:
-            data = json.loads(text)
+            data = json.loads(clean_text)
             return data
         except json.JSONDecodeError as e:
-            # Try to find JSON object in text
-            start = text.find('{')
-            end = text.rfind('}')
+            # Strategy 3: Find outermost JSON object
+            start = clean_text.find('{')
+            end = clean_text.rfind('}')
             if start != -1 and end != -1:
                 try:
-                    data = json.loads(text[start:end+1])
+                    data = json.loads(clean_text[start:end+1])
                     return data
                 except json.JSONDecodeError:
                     pass
             
-            # Fallback for non-JSON responses (e.g. plain text or code)
+            # Fallback failed
             logger.warning(f"JSON parse failed. Error: {e}")
             raise e

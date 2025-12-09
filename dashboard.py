@@ -33,6 +33,8 @@ class DashboardState:
         self._lock = threading.Lock()
         self.screenshot_base64: Optional[str] = None
         self.thought: str = "Waiting for agent thought process..."
+        self.thought_history: list = []  # 思考履歴を保持
+        self.max_thought_history: int = 10  # 最大保持数
         self.mission: str = "Waiting for instructions..."
         self.memories: Dict[str, str] = {}
         self.tools: Dict[str, Any] = {}
@@ -53,6 +55,12 @@ def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=N
             state.screenshot_base64 = screenshot
         if thought:
             state.thought = thought
+            # 「Thinking...」メッセージは履歴に追加しない
+            if "Thinking" not in thought:
+                state.thought_history.append(thought)
+                # 最大数を超えたら古いものを削除
+                if len(state.thought_history) > state.max_thought_history:
+                    state.thought_history.pop(0)
         if memories:
             state.memories = memories
         if tools:
@@ -102,6 +110,7 @@ async def get_state():
         return {
             "screenshot": state.screenshot_base64,
             "thought": state.thought,
+            "thought_history": state.thought_history.copy(),  # 思考履歴
             "mission": state.mission,
             "memories": state.memories.copy(),  # Copy to avoid race conditions
             "tools": state.tools.copy() if state.tools else {},

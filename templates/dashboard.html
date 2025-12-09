@@ -487,14 +487,24 @@
                         document.getElementById('screen-img').src = 'data:image/jpeg;base64,' + data.screenshot;
                     }
 
-                    // Update Thought
-                    if (data.thought) {
-                        const thoughtEl = document.getElementById('thought-content');
-                        if (thoughtEl.getAttribute('data-last') !== data.thought) {
-                            thoughtEl.textContent = data.thought;
-                            thoughtEl.setAttribute('data-last', data.thought);
-                            thoughtEl.scrollTop = thoughtEl.scrollHeight;
-                        }
+                    // Update Thought (最新の思考のみ表示)
+                    const thoughtEl = document.getElementById('thought-content');
+                    let thoughtDisplay = "";
+
+                    // 履歴の最新1件を表示（Thinkingはカウントしない）
+                    if (data.thought_history && data.thought_history.length > 0) {
+                        thoughtDisplay = data.thought_history[data.thought_history.length - 1];
+                    }
+
+                    // 履歴がない場合のみThinkingを表示
+                    if (!thoughtDisplay && data.thought) {
+                        thoughtDisplay = data.thought;
+                    }
+
+                    if (thoughtDisplay && thoughtEl.getAttribute('data-last') !== thoughtDisplay) {
+                        thoughtEl.textContent = thoughtDisplay;
+                        thoughtEl.setAttribute('data-last', thoughtDisplay);
+                        thoughtEl.scrollTop = thoughtEl.scrollHeight;
                     }
 
                     // Update Tool Log
@@ -525,7 +535,15 @@
                         } else {
                             for (const [key, value] of Object.entries(data.memories)) {
                                 const li = document.createElement('li');
-                                li.innerHTML = `<span class="memory-key">${key}</span>${value}`;
+                                let content = value;
+                                let category = "";
+
+                                if (typeof value === 'object' && value !== null) {
+                                    content = value.content || "";
+                                    category = value.category ? `[${value.category}] ` : "";
+                                }
+
+                                li.innerHTML = `<span class="memory-key">${category}${key}</span>${content}`;
                                 ul.appendChild(li);
                             }
                         }

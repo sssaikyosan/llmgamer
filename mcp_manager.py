@@ -182,15 +182,21 @@ class MCPManager:
             
         return filepath, ""
 
-    async def _server_lifecycle(self, name: str, params: StdioServerParameters, init_future: asyncio.Future):
+    async def _server_lifecycle(self, name: str, params: StdioServerParameters, init_future: asyncio.Future, my_stop_event: asyncio.Event):
         """
         Background task to manage the server lifecycle within proper context scopes.
+        my_stop_event is the specific Event for this lifecycle instance, used to check ownership on cleanup.
         """
+        logger.debug(f"[{name}] _server_lifecycle starting...")
         try:
+            logger.debug(f"[{name}] Entering stdio_client context...")
             async with stdio_client(params) as (read, write):
+                logger.debug(f"[{name}] stdio_client context entered, creating ClientSession...")
                 async with ClientSession(read, write) as session:
+                    logger.debug(f"[{name}] ClientSession created, initializing...")
                     # Initialize
                     await session.initialize()
+                    logger.debug(f"[{name}] Session initialized.")
                     
                     # Store session in active server object (it's now ready)
                     if name in self.active_servers:
@@ -198,6 +204,7 @@ class MCPManager:
                     
                     # Get tools to verify and cache
                     tools_result = await session.list_tools()
+                    logger.debug(f"[{name}] Got {len(tools_result.tools)} tools.")
                     if name in self.active_servers:
                         self.active_servers[name].tools = tools_result.tools
                         
@@ -209,19 +216,34 @@ class MCPManager:
                     
                     # Wait until we are told to stop
                     if name in self.active_servers:
-                        await self.active_servers[name].stop_event.wait()
+                        logger.debug(f"[{name}] Waiting on stop_event...")
+                        await my_stop_event.wait()
+                        logger.debug(f"[{name}] stop_event triggered, exiting lifecycle.")
+                    else:
+                        logger.warning(f"[{name}] Not in active_servers after init, exiting lifecycle early.")
+                        
+                logger.debug(f"[{name}] Exiting ClientSession context.")
+            logger.debug(f"[{name}] Exiting stdio_client context.")
                         
         except Exception as e:
             # Signal failure if it happened during init
+            logger.error(f"[{name}] Exception in lifecycle: {e}")
             if not init_future.done():
                 init_future.set_exception(e)
             else:
                 logger.error(f"Server {name} crashed or disconnected: {e}")
         finally:
             # Cleanup: remove from active servers when lifecycle ends
+            # BUT only if this lifecycle still "owns" the server entry (check via stop_event identity)
+            logger.debug(f"[{name}] Entering finally block...")
             if name in self.active_servers:
-                logger.debug(f"Server {name} lifecycle ended. Removing from active servers.")
-                del self.active_servers[name]
+                current_stop_event = getattr(self.active_servers[name], 'stop_event', None)
+                if current_stop_event is my_stop_event:
+                    logger.debug(f"Server {name} lifecycle ended. Removing from active servers (same instance).")
+                    del self.active_servers[name]
+                else:
+                    logger.debug(f"[{name}] Not removing from active_servers: stop_event mismatch (server was restarted).")
+            logger.debug(f"[{name}] _server_lifecycle finished.")
 
     async def start_server(self, name: str) -> tuple[bool, str]:
         """
@@ -276,7 +298,7 @@ class MCPManager:
         self.active_servers[name].stop_event = stop_event
 
         # Start the background lifecycle task
-        asyncio.create_task(self._server_lifecycle(name, server_params, init_future))
+        asyncio.create_task(self._server_lifecycle(name, server_params, init_future, stop_event))
         
         try:
             # Wait for initialization (increased timeout for heavy imports)

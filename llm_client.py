@@ -53,9 +53,28 @@ class LLMClient:
         logger.debug(f"Set {len(tools)} tools for LLM client")
 
     def _sanitize_schema(self, schema: Any) -> Any:
-        """Geminiがサポートしていないフィールド（defaultなど）をスキーマから削除する"""
+        """Geminiがサポートしているフィールドのみを残すようスキーマをクリーニングする"""
         if isinstance(schema, dict):
-            return {k: self._sanitize_schema(v) for k, v in schema.items() if k != "default"}
+            # Geminiでサポートされているスキーマフィールド
+            valid_keys = {
+                "type", "format", "description", "nullable", "enum", 
+                "properties", "required", "items"
+            }
+            new_schema = {}
+            for k, v in schema.items():
+                if k == "properties":
+                    # propertiesの中身は {prop_name: prop_schema} なので、
+                    # キー(prop_name)はそのまま維持し、値(prop_schema)だけ再帰的にクリーニングする
+                    new_props = {}
+                    for prop_name, prop_schema in v.items():
+                        new_props[prop_name] = self._sanitize_schema(prop_schema)
+                    new_schema[k] = new_props
+                elif k == "type" and isinstance(v, str):
+                    # Gemini SDKはtypeフィールドに大文字の値を期待する (OBJECT, STRING, INTEGER等)
+                    new_schema[k] = v.upper()
+                elif k in valid_keys:
+                    new_schema[k] = self._sanitize_schema(v)
+            return new_schema
         elif isinstance(schema, list):
             return [self._sanitize_schema(v) for v in schema]
         else:
@@ -91,6 +110,45 @@ class LLMClient:
             # GeminiはSchema定義内の 'default' フィールドをサポートしていないため削除
             schema = self._sanitize_schema(tool.get("inputSchema", {}))
             
+            # 整合性チェック: requiredに含まれるキーがpropertiesに存在することを確認
+            if isinstance(schema, dict) and "properties" in schema:
+                if "required" in schema and isinstance(schema["required"], list):
+                    original_required = schema["required"]
+                    valid_required = [
+                        k for k in original_required 
+                        if k in schema["properties"]
+                    ]
+                    # ログ出力（デバッグ用）
+                    if len(valid_required) != len(original_required):
+                        logger.warning(f"Tool {full_name}: Filtered required fields from {original_required} to {valid_required}")
+                    
+                    schema["required"] = valid_required
+                    
+                # 空のrequiredリストは削除
+                if "required" in schema and not schema["required"]:
+                    del schema["required"]
+
+            # propertiesがない場合、requiredも削除
+            if isinstance(schema, dict) and "properties" not in schema and "required" in schema:
+                 del schema["required"]
+            
+            # 空のpropertiesを持つスキーマの処理
+            # Geminiはパラメータなし関数を受け付けない場合があるので対処
+            if isinstance(schema, dict):
+                props = schema.get("properties", {})
+                if not props:
+                    # propertiesが空または存在しない場合、ダミーパラメータを追加
+                    # （または parameters自体を省略する方法もあるが、Gemini APIの挙動によって調整）
+                    schema["properties"] = {
+                        "_placeholder": {
+                            "type": "STRING",
+                            "description": "Optional placeholder parameter (can be ignored)"
+                        }
+                    }
+                    # requiredはダミーパラメータを含めない
+                    if "required" in schema:
+                        del schema["required"]
+
             func_decl = {
                 "name": full_name,
                 "description": f"[{tool['server']}] {tool.get('description', '')}",
@@ -100,7 +158,7 @@ class LLMClient:
         
         return function_declarations
 
-    async def generate_response(self, prompt: str, images: List[Any] = None, messages: List[Dict] = None) -> Dict[str, Any]:
+    async def generate_response(self, prompt: str, images: List[Any] = None, messages: List[Dict] = None, system_instruction: str = None) -> Dict[str, Any]:
         """LLMにリクエストを送信し、レスポンスを取得する（自動リトライ付き）。"""
         if images is None:
             images = []
@@ -108,7 +166,7 @@ class LLMClient:
         import asyncio
         for attempt in range(max_retries):
             try:
-                return await self._request_gemini(prompt, images, messages)
+                return await self._request_gemini(prompt, images, messages, system_instruction)
             except (LLMError, json.JSONDecodeError) as e:
                 if attempt == max_retries - 1:
                     logger.error(f"Failed after {max_retries} attempts. Last error: {e}")
@@ -117,7 +175,7 @@ class LLMClient:
                 await asyncio.sleep(1)
         return None
 
-    async def _request_gemini(self, prompt: str, images: List[Any], messages: List[Dict] = None) -> Dict[str, Any]:
+    async def _request_gemini(self, prompt: str, images: List[Any], messages: List[Dict] = None, system_instruction: str = None) -> Dict[str, Any]:
         """Gemini APIリクエスト（ネイティブFunction Calling使用）"""
         if not self.genai:
             raise LLMError("Gemini is not initialized.")
@@ -128,11 +186,17 @@ class LLMClient:
             if self.tools:
                 function_declarations = self._convert_tools_for_gemini()
                 tools_config = [{"function_declarations": function_declarations}]
+                # デバッグ: tools_configの内容をログに出力
+                logger.debug(f"tools_config: {json.dumps(tools_config, indent=2, default=str)}")
             
             # モデルを初期化（ツール付き）
             model_config = {}
-            if self.system_instruction:
-                model_config["system_instruction"] = self.system_instruction
+            
+            # Use provided system_instruction or fall back to the one set in __init__
+            active_instruction = system_instruction if system_instruction else self.system_instruction
+            
+            if active_instruction:
+                model_config["system_instruction"] = active_instruction
             
             model = self.genai.GenerativeModel(
                 self.model_name,
@@ -165,6 +229,31 @@ class LLMClient:
             
             # チャットセッション開始
             chat = model.start_chat(history=history)
+            
+            # デバッグ: 履歴とプロンプトをログに出力
+            logger.debug(f"=== LLM Request Debug ===")
+            logger.debug(f"History length: {len(history)}")
+            for i, h in enumerate(history):
+                role = h.get('role', 'unknown')
+                parts_summary = []
+                for p in h.get('parts', []):
+                    if isinstance(p, str):
+                        parts_summary.append(f"text({len(p)} chars)")
+                    elif isinstance(p, dict):
+                        if 'function_call' in p:
+                            parts_summary.append(f"function_call({p['function_call'].get('name', 'unknown')})")
+                        elif 'function_response' in p:
+                            parts_summary.append(f"function_response({p['function_response'].get('name', 'unknown')})")
+                        else:
+                            parts_summary.append(f"dict({list(p.keys())})")
+                    else:
+                        parts_summary.append(f"other({type(p).__name__})")
+                logger.debug(f"  [{i}] role={role}, parts=[{', '.join(parts_summary)}]")
+            logger.debug(f"Current prompt type: {type(prompt).__name__}")
+            if isinstance(prompt, str):
+                logger.debug(f"Current prompt (first 100 chars): {prompt[:100]}...")
+            else:
+                logger.debug(f"Current prompt: {prompt}")
             
             # 現在のターンの入力
             inputs = [prompt] + images

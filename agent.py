@@ -17,7 +17,7 @@ from mcp_manager import MCPManager
 from memory_manager import MemoryManager
 from llm_client import LLMClient, LLMError
 from utils.vision import capture_screenshot
-from prompts import get_system_instruction, get_context_prompt
+from prompts import get_system_instruction
 from agent_state import AgentState
 
 from config import Config
@@ -42,9 +42,8 @@ class GameAgent:
         )
         self.state = AgentState(max_history=Config.MAX_HISTORY)
         
-        # Initialize memory with initial task if provided and empty
-        if initial_task:
-             self.memory_manager.set_memory("Main Task", initial_task)
+        # Initialize ultimate goal
+        self.ultimate_goal = initial_task if initial_task else "Awaiting instructions."
         
     async def initialize(self):
         """Initialize the agent and start the meta_manager server."""
@@ -67,11 +66,20 @@ class GameAgent:
         
         logger.info("Agent Initialized. All discovered tools are running.")
         
+        # Set tools for LLM Client (Native Function Calling)
+        self._update_llm_tools()
+        
         # Initial Dashboard Update
         update_dashboard_state(
             memories=self.memory_manager.memories, 
-            tools=self.mcp_manager.get_tools_categorized()
+            tools=self.mcp_manager.get_tools_categorized(),
+            mission=self.ultimate_goal 
         )
+    
+    def _update_llm_tools(self):
+        """LLMClientにツール定義を設定する"""
+        all_tools = self.mcp_manager.get_all_tools()
+        self.llm_client.set_tools(all_tools)
 
     async def shutdown(self):
         await self.mcp_manager.shutdown_all()
@@ -116,6 +124,10 @@ class GameAgent:
         if screenshot_base64:
             image_data = base64.b64decode(screenshot_base64)
             current_img = Image.open(io.BytesIO(image_data))
+            
+            # スクリーンショットを履歴に追加
+            current_turn = self.state.add_screenshot(current_img)
+            logger.debug(f"Screenshot added to history. Current turn: {current_turn}")
 
         # Get Contexts
         mem_lines = []
@@ -128,37 +140,66 @@ class GameAgent:
 
         current_time_str = self.state.get_current_time_str(timestamp)
         
-        # Get compact tool descriptions for System Prompt
-        # Get compact tool descriptions
-        core_desc, user_desc = self.mcp_manager.get_tools_compact()
-        tools_str = f"{core_desc}\n{user_desc}"
+        # Update LLM tools (in case new servers were added)
+        self._update_llm_tools()
         
-        # 1. Context Prompt (Dynamic info + Current Turn) -> Sent to LLM this turn
-        context_prompt = get_context_prompt(tools_str, memory_str, current_time_str)
+        # Get active MCP servers (user-created, can be edited/deleted)
+        active_servers = self.mcp_manager.get_active_server_names()
+        if active_servers:
+            servers_str = ", ".join(active_servers)
+        else:
+            servers_str = "(none)"
         
-        # 2. History Prompt (Only Time) -> Saved to history for next turns
+        # スクリーンショット履歴の情報を構築
+        screenshot_history = self.state.get_screenshot_history()
+        if screenshot_history:
+            history_turns = [f"Turn {turn}" for turn, _ in screenshot_history]
+            screenshot_info = f"You are viewing {len(screenshot_history)} screenshots: {', '.join(history_turns)} (oldest to newest, current = Turn {screenshot_history[-1][0]})"
+        else:
+            screenshot_info = "No screenshot history available."
+        
+        # Context prompt with server info and screenshot history info
+        context_prompt = f"""ULTIMATE GOAL: {self.ultimate_goal}
+
+MEMORY:
+{memory_str}
+
+ACTIVE MCP SERVERS (can be edited/deleted):
+{servers_str}
+
+SCREENSHOT HISTORY:
+{screenshot_info}
+
+[{current_time_str}] Analyze the screen and decide the next action."""
+        
+        # History Prompt
         history_prompt = f"[{current_time_str}] Next action?"
         
-        # Construct History for LLM (Pure history without system/tools info)
-        history_limit = self.state.max_history * 2
-        messages_to_send = self.state.messages[-history_limit:] if history_limit > 0 else self.state.messages
-        # Note: system_instruction is handled by LLMClient init
+        # Get messages for LLM (provider-specific format)
+        messages_to_send = self.state.get_messages_for_llm(Config.LLM_PROVIDER)
         
-        # Current input images
-        current_inputs = [current_img] if current_img else []
+        # 画像入力: 3ターン分のスクリーンショット履歴をラベル付きで渡す
+        # 注意: LLMには古い順（左から右）で渡され、プロンプトでどのターンかを説明
+        images_to_send = []
+        for turn_num, img in screenshot_history:
+            images_to_send.append(img)
 
         # Generate Response via LLMClient
-        # We pass context_prompt as the current user message
-        response = await self.llm_client.generate_response(context_prompt, current_inputs, messages=messages_to_send)
+        response = await self.llm_client.generate_response(context_prompt, images_to_send, messages=messages_to_send)
         
         if response:
-             # Add the User's turn to history (Clean version)
-             self.state.add_message("user", history_prompt)
+             # Add user message to history
+             self.state.add_user_message(history_prompt)
              
-             # Add the Model's response to history
-             # ユーザーの要望により、thought（思考のまとめ）も履歴に含める
-             self.state.add_message("assistant", json.dumps(response))
+             # Add assistant response (with tool_call if present)
+             tool_call = response.get("tool_call")
+             thought = response.get("thought", "")
+             tool_call_id = self.state.add_assistant_message(thought, tool_call)
              
+             # Store tool_call_id in response for later use
+             if tool_call_id:
+                 response["_tool_call_id"] = tool_call_id
+              
         return response
 
     def save_checkpoint(self, filename: str = "agent_checkpoint.json"):
@@ -240,48 +281,43 @@ class GameAgent:
                 decision = await self.think(screenshot, timestamp)
                 
                 if decision:
-                    # Normalize LLM output if it deviated from spec (e.g. {"action": "server.tool", "arguments": ...})
-                    if "action" in decision and "action_type" not in decision:
-                        decision["action_type"] = "CALL_TOOL"
-                        if "arguments" in decision:
-                            decision["args"] = decision["arguments"]
+                    tool = None
+                    server = None
+                    args = {}
+                    thought = decision.get("thought", "No thought")
+
+                    # Native Function Calling format: tool_call object with server/name/arguments
+                    if "tool_call" in decision:
+                        tool_call = decision["tool_call"]
+                        server = tool_call.get("server")
+                        tool = tool_call.get("name")
+                        args = tool_call.get("arguments", {})
                         
-                        if "." in decision["action"]:
-                            parts = decision["action"].split(".", 1)
-                            decision["server_name"] = parts[0]
-                            decision["tool_name"] = parts[1]
-                        else:
-                             # Handle case where server is implicit or missing
-                             decision["tool_name"] = decision["action"] 
-                             # We can't easily guess server, but maybe it works if tools are unique? 
-                             # For now, let's just leave server_name missing or Handle it in execute?
-                             # Let's try to map it from known tools? Too complex for now.
-                             # If it's a meta tool, it's likely safe to guess.
-                             if decision["action"] in ["create_mcp_server", "edit_mcp_server", "delete_mcp_server", "list_mcp_files", "read_mcp_code"]:
-                                 decision["server_name"] = "meta_manager"
+                        # Handle string arguments (OpenAI style)
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                args = {}
                     
-                    thought = decision.get("_thought", decision.get("thought", "No thought"))
-                    action_type = decision.get("action_type")
                     logger.info(f"Thought: {thought}")
                     
-                    # Update Dashboard with thought and memories (in case memories changed during think? unlikely but persistent)
-                    # Also update memories if any tool changed them (detected via memory_manager check below or blindly update)
+                    # Update Dashboard with thought and memories
                     update_dashboard_state(
                         thought=thought, 
                         memories=self.memory_manager.memories
                     )
 
                     # Handle Actions
-                    if action_type == "CALL_TOOL":
-                        server = decision.get("server_name")
-                        tool = decision.get("tool_name")
-                        args = decision.get("args", {})
+                    if tool:
                         
                         # Execute the tool
                         result = await self.execute_tool(server, tool, args)
                         
-                        # Add tool result to message history so the model sees it in the next turn
-                        self.state.add_message("user", f"Tool '{tool}' executed. Result: {str(result)[:500]}")
+                        # Add tool result to history (native function calling format)
+                        tool_call_id = decision.get("_tool_call_id", "unknown")
+                        full_tool_name = f"{server}.{tool}"
+                        self.state.add_tool_result(tool_call_id, full_tool_name, str(result))
                         
                         # Update dashboard again after tool execution (in case memory/tools changed)
                         update_dashboard_state(

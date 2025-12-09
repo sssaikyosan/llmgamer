@@ -8,28 +8,20 @@ class Config:
     """Centralized configuration for the application."""
     
     # Core Settings
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+    # Core Settings
+    LLM_PROVIDER = "gemini"
     API_KEY = os.getenv("API_KEY")
 
     MAX_HISTORY = int(os.getenv("MAX_HISTORY", "10"))
     MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "100"))
     
-    # Service Specific Settings
-    LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-    
     # Model Selection Logic
-    _GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview" # Updated to a more standard recent default or user's preference
+    _GEMINI_MODEL_DEFAULT = "gemini-2.0-flash-exp" 
     _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
-    _LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
     
     @classmethod
     def get_model_name(cls) -> str:
-        """動的にモデル名を取得。LLM_PROVIDERに基づいて適切なモデルを返す。"""
-        if cls.LLM_PROVIDER == "gemini":
-            return cls._GEMINI_MODEL
-        elif cls.LLM_PROVIDER == "lmstudio":
-            return cls._LM_STUDIO_MODEL
-        # Fallback for unknown providers
+        """動的にモデル名を取得。常にGeminiモデルを返す。"""
         return cls._GEMINI_MODEL
     
     # 後方互換性のためのプロパティ（非推奨）

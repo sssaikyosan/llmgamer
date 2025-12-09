@@ -90,10 +90,68 @@
             border-radius: 4px;
         }
 
+        /* Mission Panel (Ultimate Goal) */
+        #mission-panel {
+            grid-column: 2 / 3;
+            grid-row: 1 / 2;
+            background-color: #27272a;
+            /* Slightly lighter/different for emphasis */
+            border: 2px solid var(--accent-color);
+            /* Highlight border */
+            height: 15%;
+            /* Takes top portion of right column */
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        #mission-content {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #fff;
+            overflow-y: auto;
+        }
+
         /* Memory Panel */
         #memory-panel {
             grid-column: 2 / 3;
             grid-row: 1 / 2;
+            margin-top: calc(65vh * 0.2 + 20px);
+            /* Push down by mission panel height approx */
+            height: calc(85% - 20px);
+            /* We will use flex layout for right column instead of fixed grid overlap for cleaner layout */
+        }
+
+        /* Re-doing Right Column Layout */
+        .right-column {
+            grid-column: 2 / 3;
+            grid-row: 1 / 2;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: 100%;
+        }
+
+        #mission-panel {
+            flex: 0 0 auto;
+            /* Natural height based on content or fixed */
+            min-height: 100px;
+            max-height: 200px;
+            margin: 0;
+            /* Reset margin */
+        }
+
+        #memory-panel {
+            grid-column: unset;
+            grid-row: unset;
+            margin: 0;
+            flex: 1;
+            /* Take remaining space */
+            height: auto;
         }
 
         /* Thought Panel */
@@ -346,14 +404,21 @@
         </div>
     </div>
 
-    <!-- Row 1: Screen & Memory -->
+    <!-- Row 1: Screen (Left) & Mission+Memory (Right) -->
     <div id="screen-panel" class="panel">
         <div id="status-indicator" title="Disconnected"></div>
         <img id="screen-img" src="" alt="Live Feed - Waiting for Agent...">
     </div>
 
-    <div id="memory-panel" class="panel">
-        <div class="content-area" id="memory-list" style="background: transparent; border: none; padding: 0;"></div>
+    <div class="right-column">
+        <div id="mission-panel" class="panel" style="border-color: var(--accent-color);">
+            <h2 style="color: var(--accent-color);">Ultimate Goal</h2>
+            <div id="mission-content">Waiting for instructions...</div>
+        </div>
+
+        <div id="memory-panel" class="panel">
+            <div class="content-area" id="memory-list" style="background: transparent; border: none; padding: 0;"></div>
+        </div>
     </div>
 
     <!-- Row 2: Thought & Logs -->
@@ -438,6 +503,14 @@
                         if (logEl.innerText !== data.tool_log) {
                             logEl.innerText = data.tool_log;
                             logEl.scrollTop = logEl.scrollHeight;
+                        }
+                    }
+
+                    // Update Mission
+                    if (data.mission) {
+                        const missionEl = document.getElementById('mission-content');
+                        if (missionEl.innerText !== data.mission) {
+                            missionEl.innerText = data.mission;
                         }
                     }
 

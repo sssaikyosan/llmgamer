@@ -1,5 +1,4 @@
 
-import re
 import json
 import os
 from datetime import datetime
@@ -16,51 +15,90 @@ class LLMError(Exception):
 
 
 class LLMClient:
-    def __init__(self, provider: str = "gemini", model_name: str = "gemini-3-pro-preview", system_instruction: str = None):
-        self.provider = provider
+    """
+    LLMクライアント (Gemini専用)
+    - google.generativeai のネイティブFunction Calling / Tool Useを使用
+    """
+    
+    def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.0-flash-exp", system_instruction: str = None):
+        # provider引数は互換性のため残すが、Geminiのみサポート
+        self.provider = "gemini"
         self.api_key = Config.API_KEY
         self.model_name = model_name
+        self.system_instruction = system_instruction
+        self.tools = []  # ツール定義を保持
+        self.gemini_tool_mapping = {} # Gemini関数名 -> (server, name) のマッピング
         
         if not self.api_key:
             logger.warning("No API_KEY found.")
-            
-        if self.provider == "gemini":
-            self.model = None
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                # Initialize with system_instruction if provided
-                if system_instruction:
-                    self.model = genai.GenerativeModel(self.model_name, system_instruction=system_instruction)
-                else:
-                    self.model = genai.GenerativeModel(self.model_name)
-                logger.info(f"LLM Client initialized for Gemini model: {self.model_name}")
-            except ImportError:
-                logger.critical("google-generativeai package not installed.")
-                logger.critical("Please run: pip install google-generativeai")
-            except Exception as e:
-                logger.critical(f"Failed to initialize Gemini model: {e}")
-            
-            if self.model is None:
-                logger.warning("Gemini model is not available. LLM calls will fail.")
-        elif self.provider == "lmstudio":
-            self.base_url = Config.LMSTUDIO_BASE_URL
-            logger.info(f"LLM Client initialized for LM Studio at {self.base_url}")
+        
+        self.genai = None
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            self.genai = genai
+            logger.info(f"LLM Client initialized for Gemini model: {self.model_name}")
+        except ImportError:
+            logger.critical("google-generativeai package not installed.")
+            logger.critical("Please run: pip install google-generativeai")
+        except Exception as e:
+            logger.critical(f"Failed to initialize Gemini: {e}")
 
-    def _pil_to_base64(self, image) -> str:
-        import io
-        import base64
-        buffered = io.BytesIO()
-        image.save(buffered, format="JPEG")
-        return base64.b64encode(buffered.getvalue()).decode('utf-8')
+    def set_tools(self, tools: List[Dict[str, Any]]):
+        """
+        ツール定義を設定する。
+        tools: [{"server": "meta_manager", "name": "create_mcp_server", "description": "...", "inputSchema": {...}}, ...]
+        """
+        self.tools = tools
+        logger.debug(f"Set {len(tools)} tools for LLM client")
 
-    async def generate_response(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Dict[str, Any]:
+    def _convert_tools_for_gemini(self) -> List[Dict]:
+        """ツール定義をGemini形式に変換する"""
+        function_declarations = []
+        # マッピングをリセット
+        self.gemini_tool_mapping = {}
+        
+        for tool in self.tools:
+            # server.tool_name 形式でnameを構成
+            # Gemini naming rules: 
+            # - Must start with a letter or an underscore.
+            # - Must contain only letters, numbers, and underscores.
+            # - Max 63 characters.
+            
+            # 不正な文字を置換して安全な名前を生成
+            safe_server = tool['server'].replace(".", "_").replace("-", "_").replace(" ", "_")
+            safe_tool = tool['name'].replace(".", "_").replace("-", "_").replace(" ", "_")
+            
+            # マッピングキーとなる一意の名前
+            full_name = f"{safe_server}__{safe_tool}"
+            
+            # マッピングを保存 (Gemini function name -> {server, name})
+            self.gemini_tool_mapping[full_name] = {
+                "server": tool['server'],
+                "name": tool['name']
+            }
+            
+            # inputSchemaからparametersを構築
+            schema = tool.get("inputSchema", {})
+            
+            func_decl = {
+                "name": full_name,
+                "description": f"[{tool['server']}] {tool.get('description', '')}",
+                "parameters": schema
+            }
+            function_declarations.append(func_decl)
+        
+        return function_declarations
+
+    async def generate_response(self, prompt: str, images: List[Any] = None, messages: List[Dict] = None) -> Dict[str, Any]:
         """LLMにリクエストを送信し、レスポンスを取得する（自動リトライ付き）。"""
+        if images is None:
+            images = []
         max_retries = 3
         import asyncio
         for attempt in range(max_retries):
             try:
-                return await self._generate_response_impl(prompt, images, messages)
+                return await self._request_gemini(prompt, images, messages)
             except (LLMError, json.JSONDecodeError) as e:
                 if attempt == max_retries - 1:
                     logger.error(f"Failed after {max_retries} attempts. Last error: {e}")
@@ -69,142 +107,123 @@ class LLMClient:
                 await asyncio.sleep(1)
         return None
 
-    async def _generate_response_impl(self, prompt: str, images: List[Any] = [], messages: List[Dict] = None) -> Dict[str, Any]:
-        """LLMリクエストの実装部分。"""
-        if self.provider == "gemini" and self.model:
-            try:
-                if messages:
-                    # Convert messages to Gemini history format
-                    # Expected format for history: [{'role': 'user'|'model', 'parts': [...]}, ...]
-                    history = []
-                    for msg in messages:
-                        role = "model" if msg["role"] == "assistant" else "user"
-                        content = msg["content"]
-                        parts = []
-                        if isinstance(content, str):
-                            parts.append(content)
-                        elif isinstance(content, list):
-                            # Handle mixed content (text + images) if stored in list
-                            for item in content:
-                                if isinstance(item, str):
-                                    parts.append(item)
-                                # Assuming PIL Image logic handles images separately or we need to process them here
-                                # If content has PIL images, we need to pass them directly.
-                                # Since we can't easily iterate and check types for everything without importing PIL, 
-                                # rely on genai's flexible input handling usually.
-                                else:
-                                    parts.append(item)
-                        history.append({"role": role, "parts": parts})
-                    
-                    chat = self.model.start_chat(history=history)
-                    
-                    # Current turn input
-                    inputs = [prompt] + images
-                    response = chat.send_message(inputs)
-                    
-                    # Handle safety blocks or empty responses
-                    if not response.parts:
-                        finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
-                        raise LLMError(f"レスポンスが空です。終了理由: {finish_reason}")
-                    
-                    self._log_raw_response(response.text)
-                    return self._parse_response(response.text)
-                
-                else:
-                    # Legacy single turn mode
-                    # Prepare inputs: [prompt, image1, image2, ...]
-                    inputs = [prompt] + images
-                    response = self.model.generate_content(inputs)
-                    return self._parse_response(response.text)
-            except LLMError:
-                raise
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise LLMError(f"Gemini APIエラー: {e}")
+    async def _request_gemini(self, prompt: str, images: List[Any], messages: List[Dict] = None) -> Dict[str, Any]:
+        """Gemini APIリクエスト（ネイティブFunction Calling使用）"""
+        if not self.genai:
+            raise LLMError("Gemini is not initialized.")
         
-        elif self.provider == "lmstudio":
-            try:
-                import urllib.request
-                import json
-                
-                messages_payload = []
-                
-                # Add history if provided
-                if messages:
-                    for msg in messages:
-                        role = msg["role"]
-                        content = msg["content"]
+        try:
+            # ツール定義を準備
+            tools_config = None
+            if self.tools:
+                function_declarations = self._convert_tools_for_gemini()
+                tools_config = [{"function_declarations": function_declarations}]
+            
+            # モデルを初期化（ツール付き）
+            model_config = {}
+            if self.system_instruction:
+                model_config["system_instruction"] = self.system_instruction
+            
+            model = self.genai.GenerativeModel(
+                self.model_name,
+                tools=tools_config,
+                **model_config
+            )
+            
+            # 履歴を構築（AgentStateからGemini形式で渡される）
+            history = []
+            if messages:
+                for msg in messages:
+                    # AgentStateから来るメッセージは既にGemini形式（role + parts）であることを期待
+                    if "parts" in msg:
+                        history.append(msg)
+                    else:
+                        # 万が一、旧形式が渡された場合の最小限のフォールバック
+                        role = msg.get("role", "user")
+                        content = msg.get("content", "")
                         
-                        m_content = []
-                        if isinstance(content, str):
-                            m_content = content
-                        elif isinstance(content, list):
-                            text_parts = []
-                            for item in content:
-                                if isinstance(item, str):
-                                    text_parts.append(item)
-                            m_content = "\n".join(text_parts)
-                        
-                        messages_payload.append({"role": role, "content": m_content})
-
-                # Current turn content
-                content = [{"type": "text", "text": prompt}]
-                
-                # Process images for current turn
-                for img in images:
-                    base64_img = self._pil_to_base64(img)
-                    content.append({
-                        "type": "image_url", 
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
-                    })
-                
-                messages_payload.append({"role": "user", "content": content})
-                
-                # Ensure model name is safe
-                use_model = self.model_name if self.model_name else "local-model"
-
-                payload = {
-                    "model": use_model, 
-                    "messages": messages_payload,
-                    "stream": False
-                }
-                
-                # Debug payload (without massive image data)
-                debug_payload = payload.copy()
-                debug_payload["messages"] = [{"role": "user", "content": "..."}] # Hide content for log
-                logger.debug(f"Sending request to LM Studio ({self.base_url}). Model: {use_model}")
-                
-                headers = {"Content-Type": "application/json"}
-                
-                req = urllib.request.Request(
-                    f"{self.base_url}/chat/completions",
-                    data=json.dumps(payload).encode('utf-8'),
-                    headers=headers
-                )
-                
-                try:
-                    with urllib.request.urlopen(req) as response:
-                        result = json.loads(response.read().decode('utf-8'))
-                        text_response = result['choices'][0]['message']['content']
-                        logger.debug(f"LM Studio raw response content: {text_response[:200]}..." if text_response else "LM Studio raw response content is Empty/None")
-                        if not text_response:
-                             raise LLMError("LM Studio returned empty content.")
-                        self._log_raw_response(text_response)
-                        return self._parse_response(text_response)
-                except Exception as req_err:
-                    raise LLMError(f"LM Studio リクエストエラー: {req_err}")
+                        if role == "assistant":
+                            role = "model"
+                        elif role == "tool":
+                             # ここでも tool -> user 変換を入れておく (二重の安全策)
+                            role = "user"
+                            if isinstance(content, str):
+                                content = f"Tool Output: {content}"
+                                
+                        parts = [content] if isinstance(content, str) else content
+                        history.append({"role": role, "parts": parts})
+            
+            # チャットセッション開始
+            chat = model.start_chat(history=history)
+            
+            # 現在のターンの入力
+            inputs = [prompt] + images
+            response = chat.send_message(inputs)
+            
+            # レスポンスを処理
+            if not response.candidates:
+                raise LLMError("レスポンスにcandidatesがありません。")
+            
+            candidate = response.candidates[0]
+            # コンテンツが空で終了理由も不明な場合のガード
+            if not candidate.content or not candidate.content.parts:
+                finish_reason = candidate.finish_reason if hasattr(candidate, 'finish_reason') else "UNKNOWN"
+                # 安全策: thoughtもtool_callもない場合を考慮
+                pass 
+            
+            # 結果オブジェクト初期化
+            result = {"thought": ""}
+            
+            if candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
+                    # テキストパート
+                    if hasattr(part, 'text') and part.text:
+                        result["thought"] = part.text
+                        self._log_raw_response(part.text)
                     
-            except LLMError:
-                raise
-            except Exception as e:
-                raise LLMError(f"LM Studio エラー: {e}")
+                    # Function Callパート
+                    if hasattr(part, 'function_call') and part.function_call:
+                        fc = part.function_call
+                        
+                        server_name = "unknown"
+                        tool_name = fc.name
+                        args = dict(fc.args) if fc.args else {}
 
-        else:
-            raise LLMError(f"プロバイダー '{self.provider}' は実装されていないか、初期化されていません。")
+                        # マッピングから正式名称を検索
+                        if fc.name in self.gemini_tool_mapping:
+                            mapped = self.gemini_tool_mapping[fc.name]
+                            server_name = mapped["server"]
+                            tool_name = mapped["name"]
+                        else:
+                            # フォールバック (マッピングにない場合や古い形式への対応)
+                            if "__" in fc.name:
+                                parts_list = fc.name.split("__", 1)
+                                server_name = parts_list[0]
+                                tool_name = parts_list[1]
+                            elif "_" in fc.name:
+                                 parts_list = fc.name.split("_", 1)
+                                 server_name = parts_list[0]
+                                 tool_name = parts_list[1]
+                        
+                        result["tool_call"] = {
+                            "server": server_name,
+                            "name": tool_name,
+                            "arguments": args
+                        }
+                        
+                        self._log_raw_response(f"Function Call: {fc.name}, Args: {fc.args}")
+            
+            return result
+            
+        except LLMError:
+            raise
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise LLMError(f"Gemini APIエラー: {e}")
 
     def _log_raw_response(self, content: str):
-        """デバッグ用に生のレスポンスをファイルに保存する。古いログは削除する。"""
+        """デバッグ用に生のレスポンスをファイルに保存する。"""
         try:
             log_dir = "logs"
             if not os.path.exists(log_dir):
@@ -215,7 +234,7 @@ class LLMClient:
             filepath = os.path.join(log_dir, filename)
             
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write(content)
+                f.write(str(content))
                 
             # Log Rotation
             files = sorted([
@@ -233,43 +252,3 @@ class LLMClient:
 
         except Exception as e:
             logger.error(f"Failed to log raw response: {e}")
-
-    def _parse_response(self, text: str) -> Dict[str, Any]:
-        # Remove <think> blocks for JSON parsing
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-        
-        # Strategy 1: Look for explicit ```json block
-        # Use DOTALL to match across lines, non-greedy match for the content
-        json_pattern = r'```json\s*(.*?)```'
-        match = re.search(json_pattern, text, re.DOTALL)
-        if match:
-            json_str = match.group(1).strip()
-            try:
-                data = json.loads(json_str)
-                return data
-            except json.JSONDecodeError:
-                logger.warning("Found ```json block but failed to parse content. Falling back to fuzzy search.")
-        
-        # Strategy 2: Clean all markdown blocks and try to parse the whole text or find JSON object
-        # This handles cases where user didn't use ```json or used plain text
-        clean_text = re.sub(r'```\w*\s*', '', text) # Removes ```json, ```python, etc.
-        clean_text = re.sub(r'```\s*', '', clean_text)
-        clean_text = clean_text.strip()
-        
-        try:
-            data = json.loads(clean_text)
-            return data
-        except json.JSONDecodeError as e:
-            # Strategy 3: Find outermost JSON object
-            start = clean_text.find('{')
-            end = clean_text.rfind('}')
-            if start != -1 and end != -1:
-                try:
-                    data = json.loads(clean_text[start:end+1])
-                    return data
-                except json.JSONDecodeError:
-                    pass
-            
-            # Fallback failed
-            logger.warning(f"JSON parse failed. Error: {e}")
-            raise e

@@ -27,11 +27,13 @@ app.add_middleware(
 )
 
 # Shared State
+
 class DashboardState:
     def __init__(self):
         self._lock = threading.Lock()
         self.screenshot_base64: Optional[str] = None
         self.thought: str = "Waiting for agent thought process..."
+        self.mission: str = "Waiting for instructions..."
         self.memories: Dict[str, str] = {}
         self.tools: Dict[str, Any] = {}
         self.tool_log: str = "Waiting for tool execution..."
@@ -45,7 +47,7 @@ class DashboardState:
 
 state = DashboardState()
 
-def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None, error=None):
+def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=None, tool_log=None, error=None, mission=None):
     with state._lock:
         if screenshot:
             state.screenshot_base64 = screenshot
@@ -57,6 +59,8 @@ def update_dashboard_state(screenshot=None, thought=None, memories=None, tools=N
             state.tools = tools
         if tool_log:
             state.tool_log = tool_log
+        if mission:
+             state.mission = mission
         if error:
             state.error = error
         elif error is False: # Explicit clear
@@ -98,6 +102,7 @@ async def get_state():
         return {
             "screenshot": state.screenshot_base64,
             "thought": state.thought,
+            "mission": state.mission,
             "memories": state.memories.copy(),  # Copy to avoid race conditions
             "tools": state.tools.copy() if state.tools else {},
             "tool_log": state.tool_log,

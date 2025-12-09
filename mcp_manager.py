@@ -144,21 +144,43 @@ class MCPManager:
             }
         ]
 
-    async def create_server(self, name: str, code: str) -> str:
+    async def create_server(self, name: str, code: str) -> tuple[str, str]:
         """
         Create a new MCP server script file in the workspace directory.
+        Returns (filepath, error_message). error_message is empty if no issues.
         """
+        import ast
+        
         filename = f"{name}.py"
         filepath = os.path.join(self.work_dir, filename)
         
-        # Basic validation to ensure it imports mcp
-        if "import mcp" not in code and "from mcp" not in code:
-            logger.warning(f"MCP server '{name}' does not appear to import mcp. It may not function correctly.")
+        # Syntax validation
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            error_msg = f"SYNTAX ERROR in generated code: {e.msg} at line {e.lineno}. Please fix the code."
+            logger.error(error_msg)
+            return filepath, error_msg
+        
+        # Check for forbidden patterns
+        forbidden_patterns = [
+            ("@self.mcp.tool()", "Do NOT use @self.mcp.tool() inside a class. Use @mcp.tool() at module level."),
+            ("self.mcp = FastMCP", "Do NOT define mcp inside __init__. Define 'mcp = FastMCP(...)' at module level."),
+        ]
+        for pattern, message in forbidden_patterns:
+            if pattern in code:
+                error_msg = f"FORBIDDEN PATTERN DETECTED: {message}"
+                logger.error(error_msg)
+                return filepath, error_msg
+        
+        # Basic validation to ensure it imports fastmcp
+        if "from fastmcp import FastMCP" not in code:
+            logger.warning(f"MCP server '{name}' does not import FastMCP correctly. It may not function.")
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(code)
             
-        return filepath
+        return filepath, ""
 
     async def _server_lifecycle(self, name: str, params: StdioServerParameters, init_future: asyncio.Future):
         """
@@ -364,58 +386,81 @@ class MCPManager:
                 name = args.get("name")
                 code = args.get("code")
                 
-                # Create file
-                await self.create_server(name, code)
-                
-                # Auto start (delete old if running)
-                if name in self.active_servers:
-                    await self.stop_server(name)
-                    await asyncio.sleep(0.5)
-                
-                success, msg = await self.start_server(name)
-                output_text = f"Created and started server '{name}'. {msg}"
+                if not name or not code:
+                    output_text = "Error: Both 'name' and 'code' arguments are required."
+                else:
+                    # Create file and validate code
+                    filepath, validation_error = await self.create_server(name, code)
+                    
+                    if validation_error:
+                        # Code validation failed - return error to LLM without starting server
+                        output_text = f"Error creating server '{name}': {validation_error}"
+                    else:
+                        # Auto start (delete old if running)
+                        if name in self.active_servers:
+                            await self.stop_server(name)
+                            await asyncio.sleep(0.5)
+                        
+                        success, msg = await self.start_server(name)
+                        output_text = f"Created and started server '{name}'. {msg}"
 
             elif tool_name == "delete_mcp_server":
                 name = args.get("name")
-                output_text = await self.delete_server(name)
+                if not name:
+                    output_text = "Error: 'name' argument is required."
+                else:
+                    output_text = await self.delete_server(name)
 
             elif tool_name == "list_mcp_files":
                 output = []
                 if os.path.exists(self.work_dir):
                     ws_files = [f[:-3] for f in os.listdir(self.work_dir) if f.endswith(".py")]
                     output.append(f"Workspace servers: {', '.join(ws_files) if ws_files else '(none)'}")
+                else:
+                    output.append("Workspace directory not found.")
                 output_text = "\n".join(output)
 
             
             elif tool_name == "read_mcp_code":
                 name = args.get("name")
-                filepath = os.path.join(self.work_dir, f"{name}.py")
-                
-                if os.path.exists(filepath):
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        code = f.read()
-                    output_text = f"--- Code for {name}.py ---\n{code}\n---------------------------"
+                if not name:
+                    output_text = "Error: 'name' argument is required."
                 else:
-                    output_text = f"Error: Server file '{name}.py' not found."
+                    filepath = os.path.join(self.work_dir, f"{name}.py")
+                    
+                    if os.path.exists(filepath):
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            code = f.read()
+                        output_text = f"--- Code for {name}.py ---\n{code}\n---------------------------"
+                    else:
+                        output_text = f"Error: Server file '{name}.py' not found."
 
             elif tool_name == "edit_mcp_server":
                 name = args.get("name")
                 code = args.get("code")
-                filepath = os.path.join(self.work_dir, f"{name}.py")
                 
-                if not os.path.exists(filepath):
-                    output_text = f"Error: Server '{name}' does not exist. Use create_mcp_server to create a new one."
+                if not name or not code:
+                    output_text = "Error: Both 'name' and 'code' arguments are required."
                 else:
-                    # Update file
-                    await self.create_server(name, code)
+                    filepath = os.path.join(self.work_dir, f"{name}.py")
                     
-                    # Restart/Start
-                    if name in self.active_servers:
-                        await self.stop_server(name)
-                        await asyncio.sleep(0.5)
-                    
-                    success, msg = await self.start_server(name)
-                    output_text = f"Edited and started server '{name}'. {msg}"
+                    if not os.path.exists(filepath):
+                        output_text = f"Error: Server '{name}' does not exist. Use create_mcp_server to create a new one."
+                    else:
+                        # Update file and validate code
+                        filepath, validation_error = await self.create_server(name, code)
+                        
+                        if validation_error:
+                            # Code validation failed - return error to LLM without starting server
+                            output_text = f"Error editing server '{name}': {validation_error}"
+                        else:
+                            # Restart/Start
+                            if name in self.active_servers:
+                                await self.stop_server(name)
+                                await asyncio.sleep(0.5)
+                            
+                            success, msg = await self.start_server(name)
+                            output_text = f"Edited and started server '{name}'. {msg}"
 
             else:
                 output_text = f"Error: Unknown meta tool '{tool_name}'"

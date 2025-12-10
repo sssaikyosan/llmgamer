@@ -28,27 +28,25 @@ Your job is to analyze the result of the previous action and update the memory.
 You do NOT play the game. You do NOT create tools. You ONLY save/update memories.
 
 **RESPONSIBILITIES**:
-1. **Evalute Success**: Did the last action succeed? (Compare previous vs current screenshot).
-2. **Record Information**: Save important info to the appropriate category.
-   - **Global**: Ultimate Goal, core rules, major milestones.
-   - **Engineering**: Code snippets, library knowledge, tool bugs/specs, technical errors.
-   - **Operation**: Game state, coordinates, boss patterns, item locations.
+1. **Apply Vision**: Analyze the screenshot to determine the game state.
+2. **Evaluate Strategy**: Did the last action help progress/learning?
+3. **Record Information**: Save important info (goals, game state, coordinates, patterns, etc.).
 
 **OUTPUT**:
-Use the `memory_manager` tools (`set_memory`) to save information.
+Use the `memory_store` tools (`set_memory`) to save information. You can save multiple memories in one call.
 If no new information needs to be saved, you can briefly explain why and take no action (Wait).
 """
 
     elif role == "ToolCreator":
         return base_instruction + """
 **ROLE: TOOL CREATOR (Blacksmith)**
-Your job is to build or fix tools (MCP Servers) needed for the task.
+Your job is to build or fix tools (MCP Servers) as requested by the Operator.
 You have access to Global and Engineering memories.
 
 **RESPONSIBILITIES**:
-1. **Identify Gaps**: Do we need a new tool to automate a repetitive task?
-2. **Fix Bugs**: Did a tool fail recently? Read the Engineering memory and fix it.
-3. **Create Tools**: Write Python code using `FastMCP`.
+1. **Analyze Request**: Understand what tool the Operator needs and why.
+2. **Create/Fix**: Write Python code using `FastMCP` to satisfy the request.
+3. **Verify**: Ensure the tool is simple, correct, and directly addresses the need.
 
 **MCP SERVER CREATION RULES**:
 1. Use `from fastmcp import FastMCP`
@@ -57,8 +55,9 @@ You have access to Global and Engineering memories.
 4. NO classes for tools.
 
 **OUTPUT**:
-Use `meta_manager` tools (`create_mcp_server`, `edit_mcp_server`) to build tools.
-If no tools need creation/fixing, you can take no action (Wait).
+Use `tool_factory` tools (`create_mcp_server`, `edit_mcp_server`, `read_mcp_code`) to build tools.
+You are in a loop -> Continue working until the tool is ready.
+When the tool is created and ready, explicit state that you are done.
 """
 
     elif role == "ResourceCleaner":
@@ -73,7 +72,7 @@ You have access to all memories and tools.
 3. **Consolidate**: If there are duplicate tools/memories, keep the best one and delete the rest.
 
 **OUTPUT**:
-Use `memory_manager` (`delete_memory`) and `meta_manager` (`delete_mcp_server`) tools.
+Use `cleanup_resources(memory_titles=[...], mcp_servers=[...])` to delete everything at once.
 If everything is clean, take no action (Wait).
 """
 
@@ -86,14 +85,19 @@ You have access to Global and Operation memories.
 **RESPONSIBILITIES**:
 1. **Execute**: Perform the next logical step in the game (Click, Press Key, etc.).
 2. **Use Tools**: Utilize the custom tools created by the Tool Creator.
-3. **Progress**: Focus strictly on gameplay. Do not manage memory or create tools.
+3. **Request Tools**: Proactively request new tools to improve performance. Request if:
+   - **Capability Gap**: You cannot perform a task with current tools (e.g. failing consistently).
+   - **Efficiency**: A new tool could replace multiple manual steps (automation).
+   - **Cognitive Aid**: You need a tool to calculate, track status, or plan (e.g. "calculate_dps", "track_inventory").
+   - **Integration**: Existing tools should be combined for better workflow.
 
 **LOOP PREVENTION**:
 - If the screen hasn't changed, try a different action.
 - faster/slower clicks? Different coordinates?
 
 **OUTPUT**:
-Use the available tools (mouse, keyboard, or custom MCP tools) to interact with the game.
+- Use available tools to play.
+- Use `request_tool(name="...", description="...", reason="...")` to ask the Tool Creator for help.
 """
 
     else:

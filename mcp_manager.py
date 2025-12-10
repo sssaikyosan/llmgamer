@@ -40,6 +40,13 @@ class MockResult:
     content: List['MockTextContent']
 
 class MCPManager:
+    """
+    Manages both virtual (built-in) MCP servers and user-created workspace MCP servers.
+    Virtual Servers:
+    - memory_store: For MemorySaver (save operations)
+    - tool_factory: For ToolCreator (create/edit/read operations)
+    - system_cleaner: For ResourceCleaner (delete/prune operations)
+    """
     def __init__(self):
         self.work_dir = os.path.join(os.getcwd(), "workspace")
         self.active_servers: Dict[str, ActiveServer] = {}
@@ -48,50 +55,75 @@ class MCPManager:
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
 
-        self.meta_tools = self._init_meta_tools()
         self.memory_manager_instance = None # To be attached
-        self.memory_tools = self._init_memory_tools()
+
+        # Define Virtual Tools Mapping
+        self.VIRTUAL_SERVERS = ["memory_store", "tool_factory", "system_cleaner"]
+        
+        # Initialize virtual tools definitions
+        self.tool_factory_tools = self._init_tool_factory_tools()
+        self.system_cleaner_tools = self._init_system_cleaner_tools()
+        self.memory_store_tools = self._init_memory_store_tools()
 
     def attach_memory_manager(self, memory_manager):
         """Attach the agent's MemoryManager instance to expose its tools."""
         self.memory_manager_instance = memory_manager
 
-    def _init_memory_tools(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": "set_memory",
-                "description": "Save persistent info (plan, coords, facts).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"}
-                    },
-                    "required": ["title", "content"]
-                }
-            },
-            {
-                "name": "delete_memory",
-                "description": "Delete memory by title.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"}
-                    },
-                    "required": ["title"]
-                }
-            }
-        ]
-
     def _get_allowed_libraries_str(self) -> str:
         from config import Config
         return ", ".join(Config.ALLOWED_LIBRARIES)
 
-    def _init_meta_tools(self) -> List[Dict[str, Any]]:
+    def _init_memory_store_tools(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "set_memory",
+                "description": "Save persistent info (plan, coords, facts). Supports batch updates.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "memories": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "content": {"type": "string"}
+                                },
+                                "required": ["title", "content"]
+                            }
+                        }
+                    },
+                    "required": ["memories"]
+                }
+            }
+        ]
+
+    def _init_system_cleaner_tools(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "cleanup_resources",
+                "description": "Delete multiple memories and MCP servers at once.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "memory_titles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of memory titles to delete"
+                        },
+                        "mcp_servers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of MCP server names to delete (without .py)"
+                        }
+                    }
+                }
+            }
+        ]
+
+    def _init_tool_factory_tools(self) -> List[Dict[str, Any]]:
         libs = self._get_allowed_libraries_str()
-        
         mcp_creation_rules = f"""Create Python MCP server in 'workspace/'. Use 'from fastmcp import FastMCP'. Libs: stdlib + [{libs}]"""
-        
         mcp_edit_rules = f"""Edit MCP server in 'workspace/'. Libs: stdlib + [{libs}]"""
 
         return [
@@ -118,20 +150,6 @@ class MCPManager:
                     },
                     "required": ["name", "code"]
                 }
-            },
-            {
-                "name": "delete_mcp_server",
-                "description": "Delete MCP server.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"name": {"type": "string", "description": "without .py"}},
-                    "required": ["name"]
-                }
-            },
-            {
-                "name": "list_mcp_files",
-                "description": "List MCP servers.",
-                "inputSchema": {"type": "object", "properties": {}}
             },
             {
                 "name": "read_mcp_code",
@@ -250,11 +268,9 @@ class MCPManager:
         Start an MCP server and connect to it.
         Returns (success, message).
         """
-        # Virtual Meta Manager handling
-        if name == "meta_manager":
-            return True, "Meta Manager is a virtual server and is always active."
-        if name == "memory_manager":
-            return True, "Memory Manager is a virtual server and is always active."
+        # Virtual Servers handling
+        if name in self.VIRTUAL_SERVERS:
+             return True, f"{name} is a virtual server and is always active."
 
         # Search in workspace only
         filepath = os.path.join(self.work_dir, f"{name}.py")
@@ -293,19 +309,16 @@ class MCPManager:
             exit_stack=None, # not used anymore
             transport=None   # handled by context
         )
-        # We attach the stop event to the object so we can trigger it later
-        # Note: ActiveServer dataclass needs to allow extra fields or we rely on dynamic attr
         self.active_servers[name].stop_event = stop_event
 
         # Start the background lifecycle task
         asyncio.create_task(self._server_lifecycle(name, server_params, init_future, stop_event))
         
         try:
-            # Wait for initialization (increased timeout for heavy imports)
+            # Wait for initialization
             await asyncio.wait_for(init_future, timeout=15.0)
             
             # If we are here, init succeeded
-            # Race condition check: make sure server still exists (didn't crash immediately after init)
             if name not in self.active_servers:
                 raise RuntimeError(f"Server {name} started but terminated immediately.")
 
@@ -313,11 +326,9 @@ class MCPManager:
             return True, f"Successfully started server {name}. Tools: {tools}"
             
         except Exception as e:
-            # Capture full traceback to debug TaskGroup/async errors
             error_details = traceback.format_exc()
             msg = f"Failed to start server {name}:\nError: {e}\nTraceback:\n{error_details}"
             logger.error(msg)
-            # Cleanup failed entry
             if name in self.active_servers:
                 del self.active_servers[name]
             return False, msg
@@ -326,21 +337,16 @@ class MCPManager:
         """
         Stop an active MCP server.
         """
-        if name == "meta_manager" or name == "memory_manager":
+        if name in self.VIRTUAL_SERVERS:
             return True # Cannot stop virtual server
 
         if name in self.active_servers:
             server = self.active_servers[name]
             logger.info(f"Stopping server: {name}")
             
-            # Signal the lifecycle loop to exit
             if hasattr(server, 'stop_event'):
                 server.stop_event.set()
                 
-            # Give it a moment to cleanup (optional)
-            # await asyncio.sleep(0.1) 
-            
-            # Remove from active list
             if name in self.active_servers:
                 del self.active_servers[name]
             return True
@@ -350,12 +356,11 @@ class MCPManager:
         """
         Stop and delete the server file.
         """
-        if name == "meta_manager" or name == "memory_manager":
+        if name in self.VIRTUAL_SERVERS:
             return "Error: Cannot delete virtual servers."
 
         await self.stop_server(name)
         
-        # Check workspace first
         filepath = os.path.join(self.work_dir, f"{name}.py")
         if os.path.exists(filepath):
             os.remove(filepath)
@@ -366,15 +371,13 @@ class MCPManager:
         return f"Error: Server file '{name}.py' not found in workspace."
 
     async def call_tool(self, server_name: str, tool_name: str, args: dict) -> Any:
-        """
-        Call a tool on a specific server.
-        """
-        # Handle Virtual Meta Manager Tools
-        if server_name == "meta_manager":
-            return await self._call_meta_tool(tool_name, args)
-        
-        if server_name == "memory_manager":
-            return await self._call_memory_tool(tool_name, args)
+        # Route to Virtual Servers
+        if server_name == "memory_store":
+            return await self._call_memory_store_tool(tool_name, args)
+        elif server_name == "tool_factory":
+            return await self._call_tool_factory_tool(tool_name, args)
+        elif server_name == "system_cleaner":
+            return await self._call_system_cleaner_tool(tool_name, args)
 
         if server_name not in self.active_servers:
             raise ValueError(f"Server {server_name} is not active.")
@@ -386,143 +389,176 @@ class MCPManager:
         result = await server.session.call_tool(tool_name, args)
         return result
 
-    async def _call_memory_tool(self, tool_name: str, args: dict) -> Any:
+    async def _call_memory_store_tool(self, tool_name: str, args: dict) -> Any:
         if not self.memory_manager_instance:
              return MockResult(content=[MockTextContent(text="Error: Memory Manager not attached.")])
-
         output_text = ""
         try:
             if tool_name == "set_memory":
-                output_text = self.memory_manager_instance.set_memory(args.get("title"), args.get("content"))
-            elif tool_name == "delete_memory":
-                output_text = self.memory_manager_instance.delete_memory(args.get("title"))
+                memories = args.get("memories", [])
+                if not memories:
+                    # Fallback for single item if LLM messes up/legacy call
+                    if "title" in args and "content" in args:
+                        memories = [args]
+                    else:
+                        return MockResult(content=[MockTextContent(text="Error: 'memories' list is required.")])
+                
+                results = []
+                for m in memories:
+                    title = m.get("title")
+                    content = m.get("content")
+                    res = self.memory_manager_instance.set_memory(title, content)
+                    results.append(res)
+                output_text = "\n".join(results)
+
             else:
-                 output_text = f"Error: Unknown memory tool '{tool_name}'"
+                 output_text = f"Error: Unknown memory tool '{tool_name}' on memory_store"
         except Exception as e:
             output_text = f"Error executing memory tool: {e}"
-        
         return MockResult(content=[MockTextContent(text=output_text)])
 
-    async def _call_meta_tool(self, tool_name: str, args: dict) -> Any:
-        """Compatibility wrapper for tool results to match MCP SDK structure."""
+    async def _call_system_cleaner_tool(self, tool_name: str, args: dict) -> Any:
         output_text = ""
-        
+        try:
+            if tool_name == "cleanup_resources":
+                results = []
+                
+                # Delete Memories
+                mem_titles = args.get("memory_titles", [])
+                if mem_titles:
+                    if self.memory_manager_instance:
+                        for title in mem_titles:
+                            res = self.memory_manager_instance.delete_memory(title)
+                            results.append(res)
+                    else:
+                        results.append("Error: Memory Manager not attached.")
+                
+                # Delete MCP Servers
+                mcp_servers = args.get("mcp_servers", [])
+                if mcp_servers:
+                    for name in mcp_servers:
+                        res = await self.delete_server(name)
+                        results.append(res)
+                
+                if not results:
+                    output_text = "No actions taken (empty lists provided)."
+                else:
+                    output_text = "\n".join(results)
+            else:
+                 output_text = f"Error: Unknown tool '{tool_name}' on system_cleaner"
+        except Exception as e:
+            output_text = f"Error executing system cleaner tool: {e}"
+        return MockResult(content=[MockTextContent(text=output_text)])
+
+    async def _call_tool_factory_tool(self, tool_name: str, args: dict) -> Any:
+        output_text = ""
         try:
             if tool_name == "create_mcp_server":
                 name = args.get("name")
                 code = args.get("code")
-                
                 if not name or not code:
-                    output_text = "Error: Both 'name' and 'code' arguments are required."
+                    output_text = "Error: 'name' and 'code' are required."
                 else:
-                    # Create file and validate code
                     filepath, validation_error = await self.create_server(name, code)
-                    
                     if validation_error:
-                        # Code validation failed - return error to LLM without starting server
                         output_text = f"Error creating server '{name}': {validation_error}"
                     else:
-                        # Auto start (delete old if running)
+                        # Auto start
                         if name in self.active_servers:
                             await self.stop_server(name)
                             await asyncio.sleep(0.5)
-                        
                         success, msg = await self.start_server(name)
                         output_text = f"Created and started server '{name}'. {msg}"
 
-            elif tool_name == "delete_mcp_server":
+            elif tool_name == "edit_mcp_server":
+                # Currently same logic as create (overwrite)
                 name = args.get("name")
-                if not name:
-                    output_text = "Error: 'name' argument is required."
+                code = args.get("code")
+                if not name or not code:
+                    output_text = "Error: 'name' and 'code' are required."
                 else:
-                    output_text = await self.delete_server(name)
+                    filepath = os.path.join(self.work_dir, f"{name}.py")
+                    if not os.path.exists(filepath):
+                        output_text = f"Error: Server '{name}' does not exist. Use create_mcp_server."
+                    else:
+                         filepath, validation_error = await self.create_server(name, code)
+                         if validation_error:
+                             output_text = f"Error editing server '{name}': {validation_error}"
+                         else:
+                            if name in self.active_servers:
+                                await self.stop_server(name)
+                                await asyncio.sleep(0.5)
+                            success, msg = await self.start_server(name)
+                            output_text = f"Edited and started server '{name}'. {msg}"
 
-            elif tool_name == "list_mcp_files":
-                output = []
-                if os.path.exists(self.work_dir):
-                    ws_files = [f[:-3] for f in os.listdir(self.work_dir) if f.endswith(".py")]
-                    output.append(f"Workspace servers: {', '.join(ws_files) if ws_files else '(none)'}")
-                else:
-                    output.append("Workspace directory not found.")
-                output_text = "\n".join(output)
-
-            
             elif tool_name == "read_mcp_code":
                 name = args.get("name")
                 if not name:
                     output_text = "Error: 'name' argument is required."
                 else:
                     filepath = os.path.join(self.work_dir, f"{name}.py")
-                    
                     if os.path.exists(filepath):
                         with open(filepath, "r", encoding="utf-8") as f:
                             code = f.read()
                         output_text = f"--- Code for {name}.py ---\n{code}\n---------------------------"
                     else:
                         output_text = f"Error: Server file '{name}.py' not found."
-
-            elif tool_name == "edit_mcp_server":
-                name = args.get("name")
-                code = args.get("code")
-                
-                if not name or not code:
-                    output_text = "Error: Both 'name' and 'code' arguments are required."
-                else:
-                    filepath = os.path.join(self.work_dir, f"{name}.py")
-                    
-                    if not os.path.exists(filepath):
-                        output_text = f"Error: Server '{name}' does not exist. Use create_mcp_server to create a new one."
-                    else:
-                        # Update file and validate code
-                        filepath, validation_error = await self.create_server(name, code)
-                        
-                        if validation_error:
-                            # Code validation failed - return error to LLM without starting server
-                            output_text = f"Error editing server '{name}': {validation_error}"
-                        else:
-                            # Restart/Start
-                            if name in self.active_servers:
-                                await self.stop_server(name)
-                                await asyncio.sleep(0.5)
-                            
-                            success, msg = await self.start_server(name)
-                            output_text = f"Edited and started server '{name}'. {msg}"
-
             else:
-                output_text = f"Error: Unknown meta tool '{tool_name}'"
-
+                output_text = f"Error: Unknown tool '{tool_name}' on tool_factory"
         except Exception as e:
-            output_text = f"Error executing meta tool {tool_name}: {str(e)}"
-            import traceback
-            traceback.print_exc()
-
+            output_text = f"Error executing tool factory tool: {e}"
         return MockResult(content=[MockTextContent(text=output_text)])
+
+    def list_mcp_files_str(self) -> str:
+        output = []
+        if os.path.exists(self.work_dir):
+            all_files = [f[:-3] for f in os.listdir(self.work_dir) if f.endswith(".py")]
+            
+            if not all_files:
+                return "Workspace servers: (none)"
+
+            output.append("=== WORKSPACE SERVERS ===")
+            for name in all_files:
+                status = "STOPPED"
+                details = ""
+                
+                # Check if active
+                if name in self.active_servers:
+                    status = "RUNNING"
+                    server = self.active_servers[name]
+                    # List tools
+                    tool_list = []
+                    for t in server.tools:
+                        tool_list.append(f"{t.name}: {t.description}")
+                    if tool_list:
+                        details = "\n    Tools:\n      - " + "\n      - ".join(tool_list)
+                    else:
+                        details = "\n    Tools: (none)"
+                
+                output.append(f"* {name} [{status}]{details}")
+                
+            return "\n".join(output)
+        return "Workspace directory not found."
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
         """
-        Return a list of all available tools across all active servers AND meta tools.
+        Return a list of all available tools across all active servers AND virtual servers.
         """
         all_tools = []
         
-        # Add Meta Tools
-        for tool in self.meta_tools:
-            all_tools.append({
-                "server": "meta_manager",
-                "name": tool["name"],
-                "description": tool["description"],
-                "inputSchema": tool["inputSchema"]
-            })
-            
-        # Add Memory Tools (if active) - Actually they are always available as "virtual"
-        # but the agent needs to attach the manager first. We assume it will.
-        if self.memory_manager_instance:
-             for tool in self.memory_tools:
+        # Add Virtual Tools
+        def add_virtual_tools(server_name, tools_list):
+            for tool in tools_list:
                 all_tools.append({
-                    "server": "memory_manager",
+                    "server": server_name,
                     "name": tool["name"],
                     "description": tool["description"],
                     "inputSchema": tool["inputSchema"]
                 })
+        
+        add_virtual_tools("tool_factory", self.tool_factory_tools)
+        add_virtual_tools("system_cleaner", self.system_cleaner_tools)
+        add_virtual_tools("memory_store", self.memory_store_tools)
 
         # Add Active Server Tools
         for server_name, server in self.active_servers.items():
@@ -537,32 +573,25 @@ class MCPManager:
 
     def get_tools_categorized(self) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Return tools separated by Core (Meta Manager, Memory Manager) and User (workspace/*).
+        Return tools separated by Core (Virtual) and User (Workspace).
         """
         core_tools = []
         user_tools = []
 
-        # Add Meta Tools to Core
-        for tool in self.meta_tools:
-            core_tools.append({
-                "server": "meta_manager",
-                "name": tool["name"],
-                "description": tool["description"],
-                "inputSchema": tool["inputSchema"]
-            })
-            
-        # Add Memory Tools to Core
-        if self.memory_manager_instance:
-             for tool in self.memory_tools:
+        def add_to_core(server_name, tools_list):
+            for tool in tools_list:
                 core_tools.append({
-                    "server": "memory_manager",
+                    "server": server_name,
                     "name": tool["name"],
                     "description": tool["description"],
                     "inputSchema": tool["inputSchema"]
                 })
 
+        add_to_core("tool_factory", self.tool_factory_tools)
+        add_to_core("system_cleaner", self.system_cleaner_tools)
+        add_to_core("memory_store", self.memory_store_tools)
+
         for server_name, server in self.active_servers.items():
-            # All running file-based servers are now considered User tools
             for tool in server.tools:
                 tool_dict = {
                     "server": server_name,
@@ -575,18 +604,13 @@ class MCPManager:
         return {"core": core_tools, "user": user_tools}
 
     async def cleanup_unused_servers(self, max_idle_seconds: float = 600, min_usage: int = 1):
-        """
-        Stop and potentially delete servers that haven't been used recently.
-        """
         now = time.time()
         to_remove = []
-        
         for name, server in self.active_servers.items():
             idle_time = now - server.last_used
             if idle_time > max_idle_seconds:
                 logger.info(f"Server {name} has been idle for {idle_time:.0f}s. Stopping.")
                 to_remove.append(name)
-        
         for name in to_remove:
             await self.stop_server(name)
 
@@ -595,36 +619,27 @@ class MCPManager:
         for key in keys:
             await self.stop_server(key)
 
-    def get_active_server_names(self) -> List[str]:
-        """Returns a list of currently active server names."""
-        return list(self.active_servers.keys())
+    async def cleanup_stopped_files(self) -> List[str]:
+        """
+        Delete .py files in workspace that are NOT in active_servers.
+        Returns list of deleted filenames.
+        """
+        deleted = []
+        if os.path.exists(self.work_dir):
+            for filename in os.listdir(self.work_dir):
+                if filename.endswith(".py"):
+                    name = filename[:-3]
+                    # Check if Active
+                    if name not in self.active_servers:
+                        try:
+                            filepath = os.path.join(self.work_dir, filename)
+                            if os.path.exists(filepath):
+                                os.remove(filepath)
+                                deleted.append(name)
+                                logger.info(f"Cleaned up stopped server file: {filename}")
+                        except Exception as e:
+                            logger.error(f"Failed to cleanup file {filename}: {e}")
+        return deleted
 
-    def get_tools_compact(self) -> tuple[str, str]:
-        """
-        ツール情報をコンパクトな文字列で返す。
-        Returns (core_tools_str, user_tools_str)
-        """
-        tools_cat = self.get_tools_categorized()
-        
-        def format_tools(tools: list) -> str:
-            if not tools:
-                return "(none)"
-            lines = []
-            for t in tools:
-                props = t.get("inputSchema", {}).get("properties", {})
-                # 引数名と説明を含める
-                args_parts = []
-                for arg_name, arg_info in props.items():
-                    desc = arg_info.get("description", "")
-                    if desc:
-                        args_parts.append(f"{arg_name}:{desc}")
-                    else:
-                        args_parts.append(arg_name)
-                args_str = ", ".join(args_parts) if args_parts else ""
-                lines.append(f"- {t['server']}.{t['name']}({args_str}): {t['description']}")
-            return "\n".join(lines)
-        
-        core_str = format_tools(tools_cat["core"])
-        user_str = format_tools(tools_cat["user"])
-        
-        return core_str, user_str
+    def get_active_server_names(self) -> List[str]:
+        return list(self.active_servers.keys())

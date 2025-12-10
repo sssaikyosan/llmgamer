@@ -41,7 +41,7 @@ class GameAgent:
         self.ultimate_goal = initial_task if initial_task else "Awaiting instructions."
         
     async def initialize(self):
-        """Initialize the agent and start the meta_manager server."""
+        """Initialize the agent."""
         # Attach Memory Manager so MCPManager can route tools to it
         self.mcp_manager.attach_memory_manager(self.memory_manager)
 
@@ -74,16 +74,22 @@ class GameAgent:
 
     async def execute_tool(self, server_name: str, tool_name: str, args: Dict[str, Any]):
         logger.debug(f"Executing: {server_name}.{tool_name} with {args}")
+
+        # INTERCEPTION for system tools
+        if server_name == "system" and tool_name == "request_tool":
+             self.state.variables["active_tool_request"] = args
+             return f"Tool Request Received: {args}"
+
         output = ""
         try:
             result = await self.mcp_manager.call_tool(server_name, tool_name, args)
             
             # Update Dashboard tools if we modified them (create/delete)
-            if server_name == "meta_manager":
+            if server_name == "tool_factory" or server_name == "system_cleaner":
                  update_dashboard_state(tools=self.mcp_manager.get_tools_categorized())
             
             # Update Dashboard memories if memory was modified
-            if server_name == "memory_manager":
+            if server_name == "memory_store":
                  update_dashboard_state(memories=self.memory_manager.memories)
             
             # Handle result content structure
@@ -104,7 +110,7 @@ class GameAgent:
 
         return output
 
-    async def _execute_phase(self, role: str, screenshot_base64: str, timestamp: float, current_turn: int) -> Optional[Dict[str, Any]]:
+    async def _execute_phase(self, role: str, screenshot_base64: str, timestamp: float, current_turn: int, goal_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Execute a single phase of the pipeline.
         
@@ -112,20 +118,7 @@ class GameAgent:
         """
         logger.info(f"--- Phase: {role} ---")
         
-        # 1. Prepare Memory Context based on Role
-        categories = []
-        if role == "MemorySaver":
-            categories = ["Global", "Engineering", "Operation"] # Needs all to decide where to save
-        elif role == "ToolCreator":
-            categories = ["Global", "Engineering"]
-        elif role == "ResourceCleaner":
-            categories = ["Global", "Engineering", "Operation"] # Needs all to prune
-        elif role == "Operator":
-            categories = ["Global", "Operation"]
-        else:
-            categories = None # Fallback
-            
-        memory_str = self.memory_manager.get_memories_string(categories)
+        memory_str = self.memory_manager.get_memories_string()
         
         # 2. Prepare Tool Context (Filter tools if needed, but for now passing string repr)
         # Note: We need to set the actual tools in LLMClient for Function Calling
@@ -140,18 +133,43 @@ class GameAgent:
             server = tool['server']
             # Security Policies
             if role == "MemorySaver":
-                 if server == "memory_manager": filtered_tools.append(tool)
+                 if server == "memory_store": filtered_tools.append(tool)
             elif role == "ToolCreator":
-                 if server == "meta_manager" and tool['name'] != "delete_mcp_server": filtered_tools.append(tool)
+                 if server == "tool_factory": filtered_tools.append(tool)
             elif role == "ResourceCleaner":
-                 if server == "memory_manager" and tool['name'] == "delete_memory": filtered_tools.append(tool)
-                 if server == "meta_manager" and tool['name'] == "delete_mcp_server": filtered_tools.append(tool)
-                 if server == "meta_manager" and tool['name'] == "list_mcp_files": filtered_tools.append(tool)
+                 if server == "system_cleaner": filtered_tools.append(tool)
             elif role == "Operator":
-                 if server != "meta_manager" and server != "memory_manager": filtered_tools.append(tool)
+                 # Operator can access all User servers (not Virtual ones)
+                 if server not in ["memory_store", "tool_factory", "system_cleaner"]: filtered_tools.append(tool)
+        
+        # Inject System Tools for Operator
+        if role == "Operator":
+             filtered_tools.append({
+                 "server": "system",
+                 "name": "request_tool",
+                 "description": "Request the creation of a new tool from the Tool Creator.",
+                 "inputSchema": {
+                     "type": "object",
+                     "properties": {
+                         "name": {"type": "string", "description": "Suggested name for the tool"},
+                         "description": {"type": "string", "description": "Detailed description of what the tool should do"},
+                         "reason": {"type": "string", "description": "Why this tool is needed"}
+                     },
+                     "required": ["name", "description", "reason"]
+                 }
+             })
         
         self.llm_client.set_tools(filtered_tools)
         
+        # Log available tools for debugging
+        if role == "Operator":
+            if not filtered_tools:
+                logger.warning("[Operator] No tools available! Check if workspace MCP servers are running.")
+                all_tools_list = [t["server"] + "." + t["name"] for t in all_tools]
+                logger.warning(f"[Operator] All available tools: {all_tools_list}")
+            else:
+                avail_list = [t["server"] + "." + t["name"] for t in filtered_tools]
+                logger.info(f"[Operator] Available tools: {avail_list}")
         # Tools string for Prompt
         tools_str = ", ".join([f"{t['server']}.{t['name']}" for t in filtered_tools]) if filtered_tools else "(none)"
         
@@ -162,6 +180,17 @@ class GameAgent:
         if role == "MemorySaver":
             last_action_desc = self.state.variables.get("last_action", "None (First Turn or No Action)")
             memory_str = f"PREVIOUS ACTION: {last_action_desc}\n\n" + memory_str
+
+        # Inject Tool Request for ToolCreator
+        if role == "ToolCreator":
+            req = goal_override if goal_override else self.state.variables.get("active_tool_request", "None")
+            mcp_list = self.mcp_manager.list_mcp_files_str()
+            memory_str = f"URGENT REQUEST FROM OPERATOR: {req}\n\nExisting MCP Tools:\n{mcp_list}\n\n" + memory_str
+
+        # Inject MCP List for ResourceCleaner
+        if role == "ResourceCleaner":
+            mcp_list = self.mcp_manager.list_mcp_files_str()
+            memory_str = f"CURRENT MCP SERVERS:\n{mcp_list}\n\n" + memory_str
 
         context_prompt = get_context_prompt(
             mission=self.ultimate_goal,
@@ -183,8 +212,6 @@ class GameAgent:
         max_steps = 1
         if role == "ToolCreator":
             max_steps = 5
-        elif role == "ResourceCleaner":
-            max_steps = 2
         
         # Short-term history for this phase
         phase_messages = [] 
@@ -347,12 +374,12 @@ class GameAgent:
 
             # Restore MemoryManager
             if "memory_manager" in data and isinstance(data["memory_manager"], dict):
-                # Handle migration from old format {str: str} to new {str: {content, category}}
+                # Handle migration from old format {key: {content, category}} to new {key: content}
                 memories = data["memory_manager"]
                 new_memories = {}
                 for k, v in memories.items():
-                    if isinstance(v, str):
-                         new_memories[k] = {"content": v, "category": "Global"}
+                    if isinstance(v, dict) and "content" in v:
+                         new_memories[k] = v["content"]
                     else:
                          new_memories[k] = v
                 self.memory_manager.memories = new_memories
@@ -399,14 +426,25 @@ class GameAgent:
                 # Phase 1: Memory Saver
                 await self._execute_phase("MemorySaver", screenshot_base64, timestamp, current_turn)
                 
-                # Phase 2: Tool Creator
-                await self._execute_phase("ToolCreator", screenshot_base64, timestamp, current_turn)
-                
-                # Phase 3: Resource Cleaner
+                # Phase 2: Resource Cleaner
                 await self._execute_phase("ResourceCleaner", screenshot_base64, timestamp, current_turn)
                 
-                # Phase 4: Operator
+                # Phase 3: Operator
                 await self._execute_phase("Operator", screenshot_base64, timestamp, current_turn)
+
+                # Phase 4: Tool Creator (Conditional)
+                if "active_tool_request" in self.state.variables and self.state.variables["active_tool_request"]:
+                    logger.info("Handling Tool Request...")
+                    await self._execute_phase("ToolCreator", screenshot_base64, timestamp, current_turn)
+                    
+                    # Auto-cleanup: Remove failed/stopped server files
+                    cleaned = await self.mcp_manager.cleanup_stopped_files()
+                    if cleaned:
+                        logger.info(f"Auto-cleaned failed tool files: {cleaned}")
+
+                    # Clear request after attempts
+                    if "active_tool_request" in self.state.variables:
+                        del self.state.variables["active_tool_request"]
                 
                 # Save Checkpoint
                 self.save_checkpoint()

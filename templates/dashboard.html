@@ -191,28 +191,65 @@
 
         /* Specific styling for log parts if needed */
 
-        /* Lists for Memory */
+        /* Lists for Memory - Accordion Style */
         ul {
             list-style-type: none;
             padding: 0;
             margin: 0;
         }
 
-        li {
-            padding: 12px;
+        .memory-item {
             border-bottom: 1px solid var(--border-color);
+        }
+
+        .memory-item:last-child {
+            border-bottom: none;
+        }
+
+        .memory-header {
+            padding: 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.2s;
             font-size: 0.9rem;
         }
 
-        li:last-child {
-            border-bottom: none;
+        .memory-header:hover {
+            background-color: rgba(59, 130, 246, 0.1);
         }
 
         .memory-key {
             font-weight: 700;
             color: var(--accent-color);
-            display: block;
-            margin-bottom: 4px;
+        }
+
+        .memory-toggle {
+            color: #71717a;
+            font-size: 0.8rem;
+            transition: transform 0.2s;
+        }
+
+        .memory-item.open .memory-toggle {
+            transform: rotate(180deg);
+        }
+
+        .memory-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 0 12px;
+            font-size: 0.85rem;
+            color: #a1a1aa;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .memory-item.open .memory-content {
+            max-height: 500px;
+            padding: 12px;
         }
 
         /* Scrollbar */
@@ -440,6 +477,7 @@
         const optionsContainer = document.getElementById('options-container');
 
         let isInputModalActive = false;
+        let lastMemoriesHash = '';  // Track memory changes
 
         // Submit handler
         function submitInput() {
@@ -504,7 +542,7 @@
                     if (thoughtDisplay && thoughtEl.getAttribute('data-last') !== thoughtDisplay) {
                         thoughtEl.textContent = thoughtDisplay;
                         thoughtEl.setAttribute('data-last', thoughtDisplay);
-                        thoughtEl.scrollTop = thoughtEl.scrollHeight;
+                        thoughtEl.scrollTop = 0;
                     }
 
                     // Update Tool Log
@@ -524,32 +562,60 @@
                         }
                     }
 
-                    // Update Memories
+                    // Update Memories (only if changed)
                     const memList = document.getElementById('memory-list');
                     if (data.memories) {
-                        const fragment = document.createDocumentFragment();
-                        const ul = document.createElement('ul');
-
-                        if (Object.keys(data.memories).length === 0) {
-                            ul.innerHTML = '<li style="color: #52525b; font-style: italic;">No active memories</li>';
+                        // Check if memories have changed
+                        const memoriesHash = JSON.stringify(data.memories);
+                        if (memoriesHash === lastMemoriesHash) {
+                            // No change, skip DOM update
                         } else {
-                            for (const [key, value] of Object.entries(data.memories)) {
-                                const li = document.createElement('li');
-                                let content = value;
-                                let category = "";
+                            lastMemoriesHash = memoriesHash;
 
-                                if (typeof value === 'object' && value !== null) {
-                                    content = value.content || "";
-                                    category = value.category ? `[${value.category}] ` : "";
+                            // Preserve open state of memory items
+                            const openKeys = new Set();
+                            memList.querySelectorAll('.memory-item.open').forEach(item => {
+                                const keyEl = item.querySelector('.memory-key');
+                                if (keyEl) openKeys.add(keyEl.textContent);
+                            });
+
+                            const fragment = document.createDocumentFragment();
+                            const ul = document.createElement('ul');
+
+                            if (Object.keys(data.memories).length === 0) {
+                                ul.innerHTML = '<li style="color: #52525b; font-style: italic;">No active memories</li>';
+                            } else {
+                                for (const [key, value] of Object.entries(data.memories)) {
+                                    const li = document.createElement('li');
+                                    li.className = 'memory-item';
+
+                                    // Restore open state if it was open before
+                                    if (openKeys.has(key)) {
+                                        li.classList.add('open');
+                                    }
+
+                                    // Header (clickable)
+                                    const header = document.createElement('div');
+                                    header.className = 'memory-header';
+                                    header.innerHTML = `<span class="memory-key">${key}</span><span class="memory-toggle">▼</span>`;
+                                    header.onclick = function () {
+                                        li.classList.toggle('open');
+                                    };
+
+                                    // Content (collapsible)
+                                    const content = document.createElement('div');
+                                    content.className = 'memory-content';
+                                    content.textContent = value;
+
+                                    li.appendChild(header);
+                                    li.appendChild(content);
+                                    ul.appendChild(li);
                                 }
-
-                                li.innerHTML = `<span class="memory-key">${category}${key}</span>${content}`;
-                                ul.appendChild(li);
                             }
+                            fragment.appendChild(ul);
+                            memList.innerHTML = '';
+                            memList.appendChild(fragment);
                         }
-                        fragment.appendChild(ul);
-                        memList.innerHTML = '';
-                        memList.appendChild(fragment);
                     }
 
                     // Handle Input Request

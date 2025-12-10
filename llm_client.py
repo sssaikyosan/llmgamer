@@ -9,6 +9,16 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
+def _proto_to_native(obj):
+    """Convert proto objects (MapComposite, RepeatedComposite) to native Python types."""
+    if hasattr(obj, 'items'):  # dict-like (MapComposite)
+        return {k: _proto_to_native(v) for k, v in obj.items()}
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):  # list-like (RepeatedComposite)
+        return [_proto_to_native(item) for item in obj]
+    else:
+        return obj
+
+
 class LLMError(Exception):
     """LLM関連のエラーを示す例外クラス"""
     pass
@@ -47,7 +57,7 @@ class LLMClient:
     def set_tools(self, tools: List[Dict[str, Any]]):
         """
         ツール定義を設定する。
-        tools: [{"server": "meta_manager", "name": "create_mcp_server", "description": "...", "inputSchema": {...}}, ...]
+        tools: [{"server": "mcp_manager", "name": "create_mcp_server", "description": "...", "inputSchema": {...}}, ...]
         """
         self.tools = tools
         logger.debug(f"Set {len(tools)} tools for LLM client")
@@ -286,7 +296,7 @@ class LLMClient:
                         
                         server_name = "unknown"
                         tool_name = fc.name
-                        args = dict(fc.args) if fc.args else {}
+                        args = _proto_to_native(fc.args) if fc.args else {}
 
                         # マッピングから正式名称を検索
                         if fc.name in self.gemini_tool_mapping:

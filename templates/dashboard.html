@@ -600,7 +600,13 @@
                                     if (typeof valueObj === 'string') {
                                         contentText = valueObj;
                                     } else {
-                                        contentText = valueObj.content || "";
+                                        // Handle content that might be an object (e.g., nested data)
+                                        let rawContent = valueObj.content;
+                                        if (typeof rawContent === 'object' && rawContent !== null) {
+                                            contentText = JSON.stringify(rawContent, null, 2);
+                                        } else {
+                                            contentText = rawContent || "";
+                                        }
                                         accuracy = valueObj.accuracy !== undefined ? valueObj.accuracy : -1;
                                     }
 

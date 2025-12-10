@@ -12,6 +12,14 @@ class MemoryManager:
         if content is None:
             return "Error: content is required."
         
+        # Ensure content is a string (convert dicts/lists to JSON)
+        if not isinstance(content, str):
+            import json
+            try:
+                content = json.dumps(content, indent=2, ensure_ascii=False)
+            except (TypeError, ValueError):
+                content = str(content)
+        
         # Normalize accuracy - allow -1 as "Unrated"
         if accuracy < 0:
             accuracy = -1

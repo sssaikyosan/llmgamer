@@ -1,58 +1,65 @@
 # LLM Gamer Agent
 
-LLM Gamer Agent は、Gemini を活用し、コンピュータ画面上の情報を視覚的に認識しながら、自律的にタスクを実行したりゲームをプレイしたりするエージェントシステムです。
+LLM Gamer Agent は、Microsoft Windows 上で動作し、Gemini を活用してコンピュータ画面上の視覚情報を認識しながら、自律的にタスクを実行したりゲームをプレイしたりするエージェントシステムです。
 
-Model Context Protocol (MCP) アーキテクチャを採用しており、エージェント自身が必要に応じて Python スクリプト（MCPサーバー）を作成・実行し、能力を拡張していくことができます。
+**Model Context Protocol (MCP)** アーキテクチャを採用しており、エージェント自身が必要に応じて Python スクリプト（MCPサーバー）を作成・実行し、能力を無制限に拡張していく「Self-Coding」機能を備えています。
 
 ## 特徴
 
-*   **Gemini Native**: Gemini API を使用し、高速な応答と強力なマルチモーダル処理を実現。Native Function Calling 機能により、安定したツール実行が可能です。
-*   **視覚的認識 (Vision)**: 画面のスクリーンショットをリアルタイムで取得・解析し、状況を把握します。
+*   **Gemini Native**: Google Gemini API (Pro/Flash) を使用し、高速な応答と強力なマルチモーダル処理を実現。Native Function Calling により、安定したツール実行が可能です。
+*   **視覚的認識 (Vision)**: 画面のスクリーンショットを毎ターン取得・解析し、リアルタイムで状況を把握します。
 *   **自律的なツール作成 (Self-Coding)**: タスク達成のために必要なツール（Pythonコード）をエージェント自身が生成し、即座に実行環境にデプロイして使用します。
-*   **マルチエージェントパイプライン**: 4つの専門エージェントが役割分担して協調動作し、複雑なタスクに対応します。
-*   **リアルタイムダッシュボード (Live GUI)**: エージェントの視界、思考、記憶、実行ログをWebブラウザ上でリアルタイムに監視できるモダンなGUIを提供します。
-*   **中断と再開 (Resumability)**: 過去の履歴からエージェントの状態を復元し、タスクを再開することができます。
-*   **カテゴリ別記憶管理 (Memory)**: 重要な情報を目的別に分類して記憶し、各エージェントに適切な情報を提供します。
+*   **マルチエージェントパイプライン**: 役割分担された専門エージェントが連携して動作し、複雑なタスクに対応します。
+*   **リアルタイムダッシュボード (Live GUI)**: エージェントの視界、思考、記憶、ツール実行ログをWebブラウザ上でリアルタイムに監視できるモダンなGUIを提供します。
+*   **永続的な記憶 (Memory)**: 重要な情報をキー・バリュー形式で記憶し、エージェント間で共有します。シンプルな構造で柔軟な情報保持が可能です。
+*   **中断と再開 (Resumability)**: いつでもエージェントを停止でき、JSON形式のチェックポイントからシームレスに再開可能です。
 
 ## アーキテクチャ
 
 ### マルチエージェントパイプライン
 
-このシステムは、**4つの専門エージェント**が毎ターン順番に実行される固定パイプライン構造を採用しています。
+各ターンにおいて、以下の順序でエージェントが実行されます。
 
+```mermaid
+graph LR
+    A[Screenshot] --> B(MemorySaver)
+    B --> C(ResourceCleaner)
+    C --> D(Operator)
+    D --> E{Tool Request?}
+    E -- Yes --> F(ToolCreator)
+    E -- No --> G[Checkpoint]
+    F --> G
 ```
-[Screenshot取得] → [MemorySaver] → [ToolCreator] → [ResourceCleaner] → [Operator] → [Checkpoint保存]
-```
 
-| 役割 | 名前 | 責務 | アクセス可能なメモリ | 最大ステップ |
-|------|------|------|----------------------|--------------|
-| 📝 | **MemorySaver** | 前回の行動結果を評価し、重要な情報を記憶に保存 | Global, Engineering, Operation | 1 |
-| 🔧 | **ToolCreator** | 必要なツール（MCPサーバー）の作成・修正 | Global, Engineering | 5 |
-| 🗑️ | **ResourceCleaner** | 不要なメモリやツールの削除・整理 | Global, Engineering, Operation | 2 |
-| 🎮 | **Operator** | 実際のゲーム操作・タスク実行 | Global, Operation | 1 |
+| 役割 | エージェント名 | 責務 | 使用可能なシステムツール |
+|------|----------------|------|--------------------------|
+| 📝 | **MemorySaver** | 前回の行動結果や現状を分析し、重要な情報を記憶する。 | `memory_store` |
+| 🗑️ | **ResourceCleaner** | 不要になったメモリやツールを削除し、環境を整理する。 | `system_cleaner` |
+| 🎮 | **Operator** | 実際のゲーム操作やタスク遂行を行う。ツールが不足している場合は作成を依頼する。 | User Created Tools, `system.request_tool` |
+| 🔧 | **ToolCreator** | Operatorからの依頼に基づき、新しいツール(MCPサーバー)を作成・修正する。 | `tool_factory` |
 
-### カテゴリ別記憶管理
+### 記憶管理 (Memory)
 
-メモリは3つのカテゴリに分類され、各エージェントは担当するカテゴリのみにアクセスします。
+メモリシステムはシンプル化され、カテゴリ区分を排しました。すべてのエージェントが共通の記憶領域にアクセスします。
+情報は `Title: Content` の形式で保存され、タスクの進捗、ゲームのルール、重要な座標などを保持します。
 
-| カテゴリ | 用途 | 例 |
-|----------|------|-----|
-| **Global** | 全体目標、ルール、マイルストーン | "Ultimate Goal: Beat the boss" |
-| **Engineering** | 技術情報、コードスニペット、ツールのバグ | "pyautogui click requires int coords" |
-| **Operation** | ゲーム状態、座標、パターン情報 | "Boss HP bar location: (100, 50)" |
+### ツールシステム (MCP Manager)
 
-### ツール権限
+システムは **Core (Virtual) Tools** と **User Tools** に分かれています。
 
-各エージェントは、役割に応じたツールのみを使用できます：
+1.  **Core Tools (Virtual Servers)**:
+    *   `memory_store`: 記憶の保存・更新 (`set_memory`)
+    *   `system_cleaner`: リソースの一括削除 (`cleanup_resources`)
+    *   `tool_factory`: Pythonスクリプトの作成・編集・読込 (`create_mcp_server`, `edit_mcp_server`, etc.)
 
-*   **MemorySaver**: `memory_manager` のみ
-*   **ToolCreator**: `meta_manager` (delete以外)
-*   **ResourceCleaner**: `memory_manager.delete_memory`, `meta_manager.delete_mcp_server`, `meta_manager.list_mcp_files`
-*   **Operator**: ユーザー作成ツールのみ (meta_manager, memory_manager 以外)
+2.  **User Tools (Workspace Servers)**:
+    *   エージェントが作成したPythonスクリプト。
+    *   `workspace/` ディレクトリに保存され、動的にロードされます。
+    *   **Operator** のみがこれらを使用できます。
 
 ## 動作環境
 
-*   **OS**: Windows (推奨)
+*   **OS**: Windows 10/11
 *   **Python**: 3.10 以上
 *   **LLM**: Google Gemini API Key
 
@@ -76,7 +83,7 @@ Model Context Protocol (MCP) アーキテクチャを採用しており、エー
 
     ```ini
     API_KEY=your_gemini_api_key_here
-    GEMINI_MODEL=gemini-3-pro-preview
+    GEMINI_MODEL=gemini-3-pro-preview  # または gemini-1.5-pro 等
     ```
 
 ## 使い方
@@ -89,112 +96,50 @@ Model Context Protocol (MCP) アーキテクチャを採用しており、エー
 ./run.bat
 ```
 
-または、Pythonコマンドで直接起動することも可能です。
+または、Pythonコマンドで直接起動：
 
 ```bash
 python agent.py
 ```
 
-※ 過去の実行履歴が見つかった場合、ダッシュボード上で「再開 (Resume)」するか「新規開始 (Start Fresh)」するかを選択するポップアップが表示されます。
+※ 過去の実行履歴が見つかった場合、ダッシュボード上で「再開 (Resume)」するか「新規開始 (Start Fresh)」するかを選択できます（またはコマンドライン引数 `--resume` で強制再開）。
 
 ### ダッシュボードへのアクセス
 
-エージェント起動後、Webブラウザで以下のURLにアクセスしてください。
+起動後、Webブラウザで以下のURLにアクセスしてください。
 
 **URL**: [http://localhost:15000](http://localhost:15000)
 
-ダッシュボードの機能：
 *   **Live Vision**: エージェントが見ている現在の画面。
-*   **Active Memories**: カテゴリ別に整理された現在のメモリ。
-*   **Cognitive Stream**: 各エージェントの思考内容。
-*   **Tool Activity**: 実行されたツールとその結果のログ。
-*   **User Input**: エージェントからの質問や、タスクの指示入力画面。
+*   **Active Memories**: 現在保持している記憶の一覧。
+*   **Cognitive Stream**: 各エージェントの思考プロセス (Thought) をリアルタイム表示。
+*   **Tool Activity**: ツールの実行履歴と結果。
+*   **User Input**: エージェントへの指示出しが可能。
 
-## 使用可能なライブラリ
+## 使用可能なライブラリ (Self-Coding)
 
-エージェントが自律的にツール（Pythonスクリプト）を作成する際、以下のライブラリを使用するように制限・推奨されています。これにより、安全かつ効率的なコード生成を促します。
+エージェントがツールを作成する際、以下のライブラリが使用可能です（`requirements.txt` に含まれるもの）。
 
-*   **基本操作**: `time`, `json`, `re` 等の標準ライブラリ
-*   **画面操作**: `pyautogui`, `pydirectinput` (ゲーム用), `pygetwindow`
-*   **画像認識**: `easyocr` (OCR), `pillow`, `cv2` (OpenCV), `mss` (高速キャプチャ), `numpy`
-*   **システム**: `psutil`, `pyperclip`, `pywin32`
+*   **GUI操作**: `pyautogui`, `pydirectinput`, `pygetwindow`, `pywin32`
+*   **画像認識**: `opencv-python`, `pillow`, `easyocr`, `mss`, `numpy`
+*   **その他**: `pyperclip`, `psutil`, `keyboard`, `mouse`
 
 ## ディレクトリ構成
 
 ```
 llmgamer/
-├── agent.py            # メインループ。マルチエージェントパイプラインの制御
-├── agent_state.py      # 役割別履歴管理、スクリーンショット履歴
-├── mcp_manager.py      # MCPサーバーの管理。動的なツールの作成・実行・管理
-├── memory_manager.py   # カテゴリ別メモリ管理 (Global/Engineering/Operation)
-├── llm_client.py       # Gemini 専用クライアント。Native Function Calling対応
-├── prompts.py          # 各役割（エージェント）のシステム指示定義
-├── dashboard.py        # FastAPIを使用したWebダッシュボードサーバー
-├── config.py           # 設定管理
-├── logger.py           # ロギング設定
-├── templates/          # ダッシュボードHTML
-│   └── dashboard.html
-├── workspace/          # エージェントが生成したツール（MCPサーバー）
-├── history/            # チェックポイント（中断・再開用）
-│   └── agent_checkpoint.json
-├── logs/               # デバッグログ（自動ローテーション）
-└── utils/              # ユーティリティモジュール
-    └── vision.py       # スクリーンショット取得
+├── agent.py            # メインパイプライン制御
+├── agent_state.py      # エージェントの状態・履歴管理
+├── mcp_manager.py      # MCPサーバー管理 (Virtual & User)
+├── memory_manager.py   # シンプルなKey-Valueメモリ管理
+├── llm_client.py       # Gemini API クライアント
+├── prompts.py          # システムプロンプト定義
+├── dashboard.py        # Webダッシュボード (FastAPI)
+├── config.py           # 設定
+├── workspace/          # 生成されたツール (MCPサーバー) が保存される場所
+└── history/            # チェックポイント保存先
 ```
 
-## コアコンポーネント
-
-### GameAgent (`agent.py`)
-
-*   マルチエージェントパイプラインのオーケストレーション
-*   `_execute_phase()`: 各エージェントのフェーズを実行。フェーズ内ループ対応
-*   チェックポイントの保存・復元
-
-### AgentState (`agent_state.py`)
-
-*   **役割別履歴管理**: 各エージェントは自分の過去の履歴のみを参照
-*   **グローバル履歴**: MemorySaver は全体の流れを把握するためにグローバル履歴を使用
-*   **スクリーンショット履歴**: 直近3ターンの画面を保持
-
-### MCPManager (`mcp_manager.py`)
-
-*   `meta_manager` (仮想サーバー): ツール作成・編集・削除
-*   `memory_manager` (仮想サーバー): カテゴリ別メモリ操作
-*   `workspace/` 内のユーザー作成MCPサーバーの起動・管理
-
-### LLMClient (`llm_client.py`)
-
-*   Gemini API との通信
-*   Native Function Calling 対応
-*   ツール定義の動的設定
-
-## Self-Coding アーキテクチャ
-
-このシステムは、エージェントが「ツールを使う」だけでなく**「ツールを作る」**ことができるのが最大の特徴です。
-
-1.  **ToolCreator** がタスクに必要なツールを分析
-2.  `meta_manager.create_mcp_server` で Python スクリプトを生成
-3.  生成されたスクリプトは `workspace/` に保存され、即座にMCPサーバーとして起動
-4.  **Operator** が新しいツールを使用してタスクを実行
-
-これにより、予期せぬ問題に直面しても、自ら解決のためのツールを実装して乗り越えることが可能です。
-
-## デバッグ
-
-### ログの確認
-
-*   コンソール出力: 各フェーズの思考とツール実行結果
-*   `logs/` ディレクトリ: 詳細なデバッグログ
-*   ダッシュボード: リアルタイムで思考と状態を監視
-
-### チェックポイント
-
-`history/agent_checkpoint.json` には以下が保存されます：
-*   メモリ状態 (カテゴリ付き)
-*   エージェント履歴
-*   Ultimate Goal
-*   タイムスタンプ
-
-## License
+## ライセンス
 
 MIT License

@@ -12,11 +12,11 @@ class Config:
     LLM_PROVIDER = "gemini"
     API_KEY = os.getenv("API_KEY")
 
-    MAX_HISTORY = int(os.getenv("MAX_HISTORY", "10"))
+    MAX_HISTORY = int(os.getenv("MAX_HISTORY", "5"))
     MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "100"))
     
     # Model Selection Logic
-    _GEMINI_MODEL_DEFAULT = "gemini-2.0-flash-exp" 
+    _GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview" 
     _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
     
     @classmethod

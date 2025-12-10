@@ -28,7 +28,7 @@ class AgentState:
 
         # 全体履歴 (MemorySaver参照用、時系列の全イベント)
         self.global_history: List[Dict[str, Any]] = []
-        self.max_global_history = max_history * 10
+        self.max_global_history = max_history * 4
 
     def _add_to_role_history(self, role_name: str, message: Dict[str, Any]):
         """指定された役割の履歴にメッセージを追加"""

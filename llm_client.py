@@ -116,8 +116,10 @@ class LLMClient:
         if images is None:
             images = []
         
-        max_retries = 3
+        # リトライ設定: API制限（1分）などを考慮し、回数と待機時間を増加
+        max_retries = 5
         import asyncio
+        import random
         
         for attempt in range(max_retries):
             try:
@@ -125,11 +127,32 @@ class LLMClient:
                     prompt, images, messages, system_instruction
                 )
             except Exception as e:
-                if attempt == max_retries - 1:
+                is_last_attempt = (attempt == max_retries - 1)
+                
+                if is_last_attempt:
                     logger.error(f"Failed after {max_retries} attempts. Last error: {e}")
                     raise LLMError(str(e))
-                logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
-                await asyncio.sleep(1)
+
+                # エラー内容からレートリミットかどうかを判定
+                error_msg = str(e).lower()
+                is_rate_limit = any(x in error_msg for x in ["429", "resource exhausted", "quota", "limit", "overloaded"])
+                
+                if is_rate_limit:
+                    # レートリミット時は長めに待機 (例: 30s, 60s, 70s...)
+                    # 1分制限を確実にクリアするため、後半は60秒以上待つ
+                    base_delay = 30 * (2 ** attempt)
+                    delay = min(base_delay, 70) 
+                else:
+                    # その他のエラーは通常のバックオフ (2s, 4s, 8s, 16s...)
+                    base_delay = 2 * (2 ** attempt)
+                    delay = min(base_delay, 30)
+                
+                # ジッターを追加して分散
+                jitter = random.uniform(0.1, 1.0)
+                final_delay = delay + jitter
+                
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed (RateLimit={is_rate_limit}): {e}. Retrying in {final_delay:.1f}s...")
+                await asyncio.sleep(final_delay)
         
         return None
     

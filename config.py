@@ -71,6 +71,9 @@ class Config:
         # === Windows専用 ===
         "pywin32",       # Windows API (pip: pywin32 → import win32gui, win32api, etc.)
         
+        # === 文字列処理 ===
+        "thefuzz",       # ファジーマッチング (import thefuzz)
+        
         # === MCP Helper ===
         "fastmcp",       # FastMCP framework
     ]

@@ -24,3 +24,4 @@ easyocr
 opencv-python
 numpy
 pywin32
+thefuzz

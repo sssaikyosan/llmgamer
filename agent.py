@@ -147,13 +147,13 @@ class GameAgent:
              filtered_tools.append({
                  "server": "system",
                  "name": "request_tool",
-                 "description": "Request the creation of a new tool from the Tool Creator.",
+                 "description": "Request the creation of a NEW tool, modifications to an EXISTING tool, or INVESTIGATION of a failure.",
                  "inputSchema": {
                      "type": "object",
                      "properties": {
-                         "name": {"type": "string", "description": "Suggested name for the tool"},
-                         "description": {"type": "string", "description": "Detailed description of what the tool should do"},
-                         "reason": {"type": "string", "description": "Why this tool is needed"}
+                         "name": {"type": "string", "description": "Name of the tool (existing name to fix/investigate, or new name)"},
+                         "description": {"type": "string", "description": "Detailed description of requirements. For failures: describe what happened, the error message, and request an investigation."},
+                         "reason": {"type": "string", "description": "Context (e.g., 'Tool X failed to click button Y', 'Need to debug logic')"}
                      },
                      "required": ["name", "description", "reason"]
                  }

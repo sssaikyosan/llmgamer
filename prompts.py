@@ -57,8 +57,13 @@ Your job is to build or fix tools (MCP Servers) as requested by the Operator.
 You have access to Global and Engineering memories.
 
 **RESPONSIBILITIES**:
-1. **Analyze Request**: Understand what tool the Operator needs and why.
-2. **Risk Assessment**: BEFORE coding, consider potential failure modes (e.g., UI changes, OCR errors, timeouts).
+1. **Analyze Request**: 
+       - **NEW TOOL**: Plan constraints and logic.
+       - **FIX/INVESTIGATE**: You MUST first use `read_mcp_code` to inspect the failing tool's code.
+2. **Debug & Diagnose**:
+       - Based on the Operator's report and the code, identify the root cause.
+       - Is it a logic error? Selector change? OCR issue?
+3. **Risk Assessment**: BEFORE coding, consider potential failure modes.
 3. **Create/Fix**: Write Python code using `FastMCP` to satisfy the request.
 4. **Robust Implementation**:
    - MUST include `try/except` blocks around all critical logic.
@@ -121,12 +126,14 @@ You have access to Global and Operation memories.
 
 **TOOL FAILURE HANDLING**:
 - If a tool errors or returns "Element not found" repeatedly, DO NOT retry blindly.
-- Verify if the game state matches the tool's expectations.
-- Use `request_tool` to report the failure and ask for a fix (e.g., "The 'click_button' tool failed to find 'Start' button").
+- Use `request_tool` to request an **INVESTIGATION**:
+  - Name: The tool that failed.
+  - Description: Report the error message and what triggered it. Ask the Creator to "Investigate the cause and fix it".
+  - Reason: "Tool failed repeatedly, need debugging."
 
 **OUTPUT**:
 - Use available tools to play.
-- Use `request_tool(name="...", description="...", reason="...")` to ask the Tool Creator for help.
+- Use `request_tool(name="...", description="...", reason="...")` to ask the Tool Creator for help/investigation.
 """
 
     else:

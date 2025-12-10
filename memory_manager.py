@@ -12,10 +12,10 @@ class MemoryManager:
         if content is None:
             return "Error: content is required."
         
-        # Normalize accuracy
+        # Normalize accuracy - allow -1 as "Unrated"
         if accuracy < 0:
-            accuracy = 0 # Default if not provided
-        if accuracy > 100:
+            accuracy = -1
+        elif accuracy > 100:
             accuracy = 100
 
         action = "updated" if title in self.memories else "added"
@@ -23,7 +23,8 @@ class MemoryManager:
             "content": content,
             "accuracy": accuracy
         }
-        return f"Memory '{title}' {action} (Accuracy: {accuracy}%)."
+        acc_str = f"{accuracy}%" if accuracy >= 0 else "Unrated"
+        return f"Memory '{title}' {action} (Accuracy: {acc_str})."
 
     def delete_memory(self, title: str) -> str:
         """Delete a memory."""
@@ -45,9 +46,10 @@ class MemoryManager:
             if isinstance(data, str):
                 lines.append(f"- {title}: {data} (Accuracy: Unknown)")
             else:
-                acc = data.get("accuracy", 0)
+                acc = data.get("accuracy", -1)
                 content = data.get("content", "")
-                lines.append(f"- {title}: {content} (Accuracy: {acc}%)")
+                acc_str = f"Accuracy: {acc}%" if acc >= 0 else "Accuracy: Unrated"
+                lines.append(f"- {title}: {content} ({acc_str})")
             
         return "\n".join(lines)
 

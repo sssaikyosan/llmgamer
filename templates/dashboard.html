@@ -596,31 +596,56 @@
 
                                     // Extract data (handle legacy string vs new object)
                                     let contentText = "";
-                                    let accuracy = 0;
+                                    let accuracy = -1;
                                     if (typeof valueObj === 'string') {
                                         contentText = valueObj;
-                                        accuracy = null;
                                     } else {
                                         contentText = valueObj.content || "";
-                                        accuracy = valueObj.accuracy !== undefined ? valueObj.accuracy : 0;
+                                        accuracy = valueObj.accuracy !== undefined ? valueObj.accuracy : -1;
                                     }
 
                                     // Color code accuracy
                                     let accColor = "#71717a"; // gray
-                                    if (accuracy !== null) {
+                                    let showBadge = false;
+                                    if (accuracy !== null && accuracy >= 0) {
+                                        showBadge = true;
                                         if (accuracy >= 80) accColor = "#22c55e"; // green
                                         else if (accuracy >= 50) accColor = "#f59e0b"; // amber
                                         else accColor = "#ef4444"; // red
                                     }
 
-                                    const accBadge = accuracy !== null 
-                                        ? `<span style="font-size: 0.75rem; color: ${accColor}; border: 1px solid ${accColor}; padding: 1px 4px; border-radius: 4px; margin-right: 8px;">${accuracy}%</span>` 
-                                        : '';
-
                                     // Header (clickable)
                                     const header = document.createElement('div');
                                     header.className = 'memory-header';
-                                    header.innerHTML = `<div>${accBadge}<span class="memory-key">${key}</span></div><span class="memory-toggle">▼</span>`;
+
+                                    const headerLeft = document.createElement('div');
+                                    headerLeft.style.display = 'flex';
+                                    headerLeft.style.alignItems = 'center';
+
+                                    if (showBadge) {
+                                        const badge = document.createElement('span');
+                                        badge.style.fontSize = '0.75rem';
+                                        badge.style.color = accColor;
+                                        badge.style.border = `1px solid ${accColor}`;
+                                        badge.style.padding = '1px 4px';
+                                        badge.style.borderRadius = '4px';
+                                        badge.style.marginRight = '8px';
+                                        badge.textContent = `${accuracy}%`;
+                                        headerLeft.appendChild(badge);
+                                    }
+
+                                    const keySpan = document.createElement('span');
+                                    keySpan.className = 'memory-key';
+                                    keySpan.textContent = key;
+                                    headerLeft.appendChild(keySpan);
+
+                                    const toggle = document.createElement('span');
+                                    toggle.className = 'memory-toggle';
+                                    toggle.textContent = '▼';
+
+                                    header.appendChild(headerLeft);
+                                    header.appendChild(toggle);
+
                                     header.onclick = function () {
                                         li.classList.toggle('open');
                                     };

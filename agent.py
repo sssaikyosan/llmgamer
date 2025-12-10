@@ -329,6 +329,11 @@ class GameAgent:
                 #    Since we already added function_response to phase_messages, we just need a simple prompt
                 current_prompt = "Continue based on the function response above. Decide if you need to take another action or if you're done."
                 
+                # ToolCreator: Re-inject updated MCP list so it can see what was just created
+                if role == "ToolCreator":
+                    updated_mcp_list = self.mcp_manager.list_mcp_files_str()
+                    current_prompt = f"Function executed.\n\n=== UPDATED MCP SERVERS ===\n{updated_mcp_list}\n\nReview the tools above. If the original request is fully satisfied, state that you are DONE. Otherwise, use edit_mcp_server to add missing functionality to an EXISTING server rather than creating a new one."
+                
                 # If Operator, save as Last Action
                 if role == "Operator":
                     self.state.variables["last_action"] = f"Executed {server}__{name} with {args}"
@@ -382,19 +387,19 @@ class GameAgent:
                          # Valid dict format (new or old with category), preserve it
                          # Ensure accuracy exists
                          if "accuracy" not in v:
-                             v["accuracy"] = 0 # Default for migrated data
+                             v["accuracy"] = -1 # Default for migrated data
                          new_memories[k] = v
                     elif isinstance(v, str):
                          # Legacy strict string format -> upgrade to dict
                          new_memories[k] = {
                              "content": v,
-                             "accuracy": 0 # Unknown accuracy for legacy
+                             "accuracy": -1 # Unknown accuracy for legacy
                          }
                     else:
                          # Unknown format, try to save as string content
                          new_memories[k] = {
                              "content": str(v),
-                             "accuracy": 0
+                             "accuracy": -1
                          }
                 self.memory_manager.memories = new_memories
             

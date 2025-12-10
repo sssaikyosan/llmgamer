@@ -475,7 +475,11 @@ class MCPManager:
                             await self.stop_server(name)
                             await asyncio.sleep(0.5)
                         success, msg = await self.start_server(name)
-                        output_text = f"Created and started server '{name}'. {msg}"
+                        if success and name in self.active_servers:
+                            tools_detail = "\n".join([f"  - {t.name}: {t.description}" for t in self.active_servers[name].tools])
+                            output_text = f"SUCCESS: Created and started server '{name}'.\nRegistered Tools:\n{tools_detail}"
+                        else:
+                            output_text = f"Created server '{name}' but failed to start: {msg}"
 
             elif tool_name == "edit_mcp_server":
                 # Currently same logic as create (overwrite)
@@ -496,7 +500,11 @@ class MCPManager:
                                 await self.stop_server(name)
                                 await asyncio.sleep(0.5)
                             success, msg = await self.start_server(name)
-                            output_text = f"Edited and started server '{name}'. {msg}"
+                            if success and name in self.active_servers:
+                                tools_detail = "\n".join([f"  - {t.name}: {t.description}" for t in self.active_servers[name].tools])
+                                output_text = f"SUCCESS: Edited and restarted server '{name}'.\nRegistered Tools:\n{tools_detail}"
+                            else:
+                                output_text = f"Edited server '{name}' but failed to restart: {msg}"
 
             elif tool_name == "read_mcp_code":
                 name = args.get("name")

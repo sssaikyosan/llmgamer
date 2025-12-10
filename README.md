@@ -61,7 +61,7 @@ graph LR
 
 *   **OS**: Windows 10/11
 *   **Python**: 3.10 以上
-*   **LLM**: Google Gemini API Key
+*   **LLM**: Google Gemini API Key **または** Anthropic Claude API Key
 
 ## インストール
 
@@ -81,10 +81,20 @@ graph LR
 4.  環境変数を設定します。
     `.env.example` をコピーして `.env` という名前のファイルを作成し、APIキーを設定してください。
 
+    **Gemini を使用する場合:**
     ```ini
-    API_KEY=your_gemini_api_key_here
-    GEMINI_MODEL=gemini-3-pro-preview  # または gemini-1.5-pro 等
-    AI_LANGUAGE=Japanese               # エージェントの応答言語 (Japanese/English)
+    LLM_PROVIDER=gemini
+    GEMINI_API_KEY=your_gemini_api_key_here
+    GEMINI_MODEL=gemini-3-pro-preview
+    AI_LANGUAGE=Japanese
+    ```
+
+    **Claude を使用する場合:**
+    ```ini
+    LLM_PROVIDER=claude
+    CLAUDE_API_KEY=your_anthropic_api_key_here
+    CLAUDE_MODEL=claude-opus-4-5-20251101
+    AI_LANGUAGE=Japanese
     ```
 
 ## 使い方
@@ -116,14 +126,6 @@ python agent.py
 *   **Cognitive Stream**: 各エージェントの思考プロセス (Thought) をリアルタイム表示。
 *   **Tool Activity**: ツールの実行履歴と結果。
 *   **User Input**: エージェントへの指示出しが可能。
-
-## 使用可能なライブラリ (Self-Coding)
-
-エージェントがツールを作成する際、以下のライブラリが使用可能です（`requirements.txt` に含まれるもの）。
-
-*   **GUI操作**: `pyautogui`, `pydirectinput`, `pygetwindow`, `pywin32`
-*   **画像認識**: `opencv-python`, `pillow`, `easyocr`, `mss`, `numpy`
-*   **その他**: `pyperclip`, `psutil`, `keyboard`, `mouse`
 
 ## ディレクトリ構成
 

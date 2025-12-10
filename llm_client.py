@@ -1,22 +1,17 @@
+"""
+LLM Client (Factory Pattern)
+Provides a unified interface for multiple LLM providers.
+"""
 
 import json
 import os
 from datetime import datetime
-from config import Config
 from typing import List, Dict, Any, Optional
+
+from config import Config
 from logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _proto_to_native(obj):
-    """Convert proto objects (MapComposite, RepeatedComposite) to native Python types."""
-    if hasattr(obj, 'items'):  # dict-like (MapComposite)
-        return {k: _proto_to_native(v) for k, v in obj.items()}
-    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):  # list-like (RepeatedComposite)
-        return [_proto_to_native(item) for item in obj]
-    else:
-        return obj
 
 
 class LLMError(Exception):
@@ -26,338 +21,133 @@ class LLMError(Exception):
 
 class LLMClient:
     """
-    LLMクライアント (Gemini専用)
-    - google.generativeai のネイティブFunction Calling / Tool Useを使用
+    LLMクライアント (ファクトリーパターン)
+    - プロバイダーに応じて適切な実装を使用
+    - Gemini (デフォルト) または Claude をサポート
     """
     
-    def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.0-flash-exp", system_instruction: str = None):
-        # provider引数は互換性のため残すが、Geminiのみサポート
-        self.provider = "gemini"
-        self.api_key = Config.API_KEY
-        self.model_name = model_name
+    def __init__(
+        self,
+        provider: str = None,
+        model_name: str = None,
+        system_instruction: str = None
+    ):
+        """
+        Args:
+            provider: "gemini" or "claude" (default: Config.LLM_PROVIDER)
+            model_name: モデル名 (default: Config.get_model_name())
+            system_instruction: システムプロンプト
+        """
+        self.provider_name = provider or Config.LLM_PROVIDER
+        self.model_name = model_name or Config.get_model_name()
         self.system_instruction = system_instruction
-        self.tools = []  # ツール定義を保持
-        self.gemini_tool_mapping = {} # Gemini関数名 -> (server, name) のマッピング
         
-        if not self.api_key:
-            logger.warning("No API_KEY found.")
+        # プロバイダーインスタンスを作成
+        self._provider = self._create_provider()
         
-        self.genai = None
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self.genai = genai
-            logger.info(f"LLM Client initialized for Gemini model: {self.model_name}")
-        except ImportError:
-            logger.critical("google-generativeai package not installed.")
-            logger.critical("Please run: pip install google-generativeai")
-        except Exception as e:
-            logger.critical(f"Failed to initialize Gemini: {e}")
-
+        # 後方互換性のため
+        self.tools = []
+        self.gemini_tool_mapping = {}  # Gemini固有（後方互換用）
+    
+    def _create_provider(self):
+        """プロバイダーを選択・初期化"""
+        if self.provider_name == "claude":
+            from providers.claude import ClaudeProvider
+            api_key = Config.CLAUDE_API_KEY
+            if not api_key:
+                logger.warning("CLAUDE_API_KEY not found. Please set it in .env file.")
+            return ClaudeProvider(
+                api_key=api_key or "",
+                model_name=self.model_name,
+                system_instruction=self.system_instruction
+            )
+        else:  # Default: Gemini
+            from providers.gemini import GeminiProvider
+            api_key = Config.GEMINI_API_KEY
+            if not api_key:
+                logger.warning("GEMINI_API_KEY (or API_KEY) not found. Please set it in .env file.")
+            return GeminiProvider(
+                api_key=api_key or "",
+                model_name=self.model_name,
+                system_instruction=self.system_instruction
+            )
+    
     def set_tools(self, tools: List[Dict[str, Any]]):
         """
-        ツール定義を設定する。
-        tools: [{"server": "mcp_manager", "name": "create_mcp_server", "description": "...", "inputSchema": {...}}, ...]
+        ツール定義を設定
+        tools: [{"server": "...", "name": "...", "description": "...", "inputSchema": {...}}, ...]
         """
-        self.tools = tools
-        logger.debug(f"Set {len(tools)} tools for LLM client")
-
-    def _sanitize_schema(self, schema: Any) -> Any:
-        """Geminiがサポートしているフィールドのみを残すようスキーマをクリーニングする"""
-        if isinstance(schema, dict):
-            # Geminiでサポートされているスキーマフィールド
-            valid_keys = {
-                "type", "format", "description", "nullable", "enum", 
-                "properties", "required", "items"
-            }
-            new_schema = {}
-            for k, v in schema.items():
-                if k == "properties":
-                    # propertiesの中身は {prop_name: prop_schema} なので、
-                    # キー(prop_name)はそのまま維持し、値(prop_schema)だけ再帰的にクリーニングする
-                    new_props = {}
-                    for prop_name, prop_schema in v.items():
-                        new_props[prop_name] = self._sanitize_schema(prop_schema)
-                    new_schema[k] = new_props
-                elif k == "type" and isinstance(v, str):
-                    # Gemini SDKはtypeフィールドに大文字の値を期待する (OBJECT, STRING, INTEGER等)
-                    new_schema[k] = v.upper()
-                elif k in valid_keys:
-                    new_schema[k] = self._sanitize_schema(v)
-            return new_schema
-        elif isinstance(schema, list):
-            return [self._sanitize_schema(v) for v in schema]
-        else:
-            return schema
-
-    def _convert_tools_for_gemini(self) -> List[Dict]:
-        """ツール定義をGemini形式に変換する"""
-        function_declarations = []
-        # マッピングをリセット
-        self.gemini_tool_mapping = {}
+        self.tools = tools  # 後方互換用
+        self._provider.set_tools(tools)
         
-        for tool in self.tools:
-            # server.tool_name 形式でnameを構成
-            # Gemini naming rules: 
-            # - Must start with a letter or an underscore.
-            # - Must contain only letters, numbers, and underscores.
-            # - Max 63 characters.
-            
-            # 不正な文字を置換して安全な名前を生成
-            safe_server = tool['server'].replace(".", "_").replace("-", "_").replace(" ", "_")
-            safe_tool = tool['name'].replace(".", "_").replace("-", "_").replace(" ", "_")
-            
-            # マッピングキーとなる一意の名前
-            full_name = f"{safe_server}__{safe_tool}"
-            
-            # マッピングを保存 (Gemini function name -> {server, name})
-            self.gemini_tool_mapping[full_name] = {
-                "server": tool['server'],
-                "name": tool['name']
-            }
-            
-            # inputSchemaからparametersを構築
-            # GeminiはSchema定義内の 'default' フィールドをサポートしていないため削除
-            schema = self._sanitize_schema(tool.get("inputSchema", {}))
-            
-            # 整合性チェック: requiredに含まれるキーがpropertiesに存在することを確認
-            if isinstance(schema, dict) and "properties" in schema:
-                if "required" in schema and isinstance(schema["required"], list):
-                    original_required = schema["required"]
-                    valid_required = [
-                        k for k in original_required 
-                        if k in schema["properties"]
-                    ]
-                    # ログ出力（デバッグ用）
-                    if len(valid_required) != len(original_required):
-                        logger.warning(f"Tool {full_name}: Filtered required fields from {original_required} to {valid_required}")
-                    
-                    schema["required"] = valid_required
-                    
-                # 空のrequiredリストは削除
-                if "required" in schema and not schema["required"]:
-                    del schema["required"]
-
-            # propertiesがない場合、requiredも削除
-            if isinstance(schema, dict) and "properties" not in schema and "required" in schema:
-                 del schema["required"]
-            
-            # 空のpropertiesを持つスキーマの処理
-            # Geminiはパラメータなし関数を受け付けない場合があるので対処
-            if isinstance(schema, dict):
-                props = schema.get("properties", {})
-                if not props:
-                    # propertiesが空または存在しない場合、ダミーパラメータを追加
-                    # （または parameters自体を省略する方法もあるが、Gemini APIの挙動によって調整）
-                    schema["properties"] = {
-                        "_placeholder": {
-                            "type": "STRING",
-                            "description": "Optional placeholder parameter (can be ignored)"
-                        }
-                    }
-                    # requiredはダミーパラメータを含めない
-                    if "required" in schema:
-                        del schema["required"]
-
-            func_decl = {
-                "name": full_name,
-                "description": f"[{tool['server']}] {tool.get('description', '')}",
-                "parameters": schema
-            }
-            function_declarations.append(func_decl)
+        # 後方互換: gemini_tool_mappingを同期
+        if hasattr(self._provider, 'tool_mapping'):
+            self.gemini_tool_mapping = self._provider.tool_mapping
         
-        return function_declarations
-
-    async def generate_response(self, prompt: str, images: List[Any] = None, messages: List[Dict] = None, system_instruction: str = None) -> Dict[str, Any]:
-        """LLMにリクエストを送信し、レスポンスを取得する（自動リトライ付き）。"""
+        logger.debug(f"Set {len(tools)} tools for LLM client (provider: {self.provider_name})")
+    
+    async def generate_response(
+        self,
+        prompt: str,
+        images: List[Any] = None,
+        messages: List[Dict] = None,
+        system_instruction: str = None
+    ) -> Dict[str, Any]:
+        """
+        LLMにリクエストを送信し、レスポンスを取得する（自動リトライ付き）
+        
+        Args:
+            prompt: 現在のターンのプロンプト
+            images: PIL.Imageのリスト
+            messages: 内部形式のメッセージ履歴
+            system_instruction: システムプロンプト (オプション)
+        
+        Returns:
+            {
+                "thought": str,  # テキスト応答
+                "tool_call": {   # オプション
+                    "id": str,       # プロバイダーが発行したID
+                    "server": str,
+                    "name": str,
+                    "arguments": dict
+                }
+            }
+        """
         if images is None:
             images = []
+        
         max_retries = 3
         import asyncio
+        
         for attempt in range(max_retries):
             try:
-                return await self._request_gemini(prompt, images, messages, system_instruction)
-            except (LLMError, json.JSONDecodeError) as e:
+                return await self._provider.generate_response(
+                    prompt, images, messages, system_instruction
+                )
+            except Exception as e:
                 if attempt == max_retries - 1:
                     logger.error(f"Failed after {max_retries} attempts. Last error: {e}")
-                    raise
+                    raise LLMError(str(e))
                 logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
                 await asyncio.sleep(1)
-        return None
-
-    async def _request_gemini(self, prompt: str, images: List[Any], messages: List[Dict] = None, system_instruction: str = None) -> Dict[str, Any]:
-        """Gemini APIリクエスト（ネイティブFunction Calling使用）"""
-        if not self.genai:
-            raise LLMError("Gemini is not initialized.")
         
-        try:
-            # ツール定義を準備
-            tools_config = None
-            if self.tools:
-                function_declarations = self._convert_tools_for_gemini()
-                tools_config = [{"function_declarations": function_declarations}]
-                # デバッグ: tools_configの内容をログに出力
-                logger.debug(f"tools_config: {json.dumps(tools_config, indent=2, default=str)}")
-            
-            # モデルを初期化（ツール付き）
-            model_config = {}
-            
-            # Use provided system_instruction or fall back to the one set in __init__
-            active_instruction = system_instruction if system_instruction else self.system_instruction
-            
-            if active_instruction:
-                model_config["system_instruction"] = active_instruction
-            
-            model = self.genai.GenerativeModel(
-                self.model_name,
-                tools=tools_config,
-                **model_config
-            )
-            
-            # 履歴を構築（AgentStateからGemini形式で渡される）
-            history = []
-            if messages:
-                for msg in messages:
-                    # AgentStateから来るメッセージは既にGemini形式（role + parts）であることを期待
-                    if "parts" in msg:
-                        history.append(msg)
-                    else:
-                        # 万が一、旧形式が渡された場合の最小限のフォールバック
-                        role = msg.get("role", "user")
-                        content = msg.get("content", "")
-                        
-                        if role == "assistant":
-                            role = "model"
-                        elif role == "tool":
-                             # ここでも tool -> user 変換を入れておく (二重の安全策)
-                            role = "user"
-                            if isinstance(content, str):
-                                content = f"Tool Output: {content}"
-                                
-                        parts = [content] if isinstance(content, str) else content
-                        history.append({"role": role, "parts": parts})
-            
-            # チャットセッション開始
-            chat = model.start_chat(history=history)
-            
-            # デバッグ: 履歴とプロンプトをログに出力
-            logger.debug(f"=== LLM Request Debug ===")
-            logger.debug(f"History length: {len(history)}")
-            for i, h in enumerate(history):
-                role = h.get('role', 'unknown')
-                parts_summary = []
-                for p in h.get('parts', []):
-                    if isinstance(p, str):
-                        parts_summary.append(f"text({len(p)} chars)")
-                    elif isinstance(p, dict):
-                        if 'function_call' in p:
-                            parts_summary.append(f"function_call({p['function_call'].get('name', 'unknown')})")
-                        elif 'function_response' in p:
-                            parts_summary.append(f"function_response({p['function_response'].get('name', 'unknown')})")
-                        else:
-                            parts_summary.append(f"dict({list(p.keys())})")
-                    else:
-                        parts_summary.append(f"other({type(p).__name__})")
-                logger.debug(f"  [{i}] role={role}, parts=[{', '.join(parts_summary)}]")
-            logger.debug(f"Current prompt type: {type(prompt).__name__}")
-            if isinstance(prompt, str):
-                logger.debug(f"Current prompt (first 100 chars): {prompt[:100]}...")
-            else:
-                logger.debug(f"Current prompt: {prompt}")
-            
-            # 現在のターンの入力
-            inputs = [prompt] + images
-            response = chat.send_message(inputs)
-            
-            # レスポンスを処理
-            if not response.candidates:
-                raise LLMError("レスポンスにcandidatesがありません。")
-            
-            candidate = response.candidates[0]
-            # コンテンツが空で終了理由も不明な場合のガード
-            if not candidate.content or not candidate.content.parts:
-                finish_reason = candidate.finish_reason if hasattr(candidate, 'finish_reason') else "UNKNOWN"
-                # 安全策: thoughtもtool_callもない場合を考慮
-                pass 
-            
-            # 結果オブジェクト初期化
-            result = {"thought": ""}
-            
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    # テキストパート
-                    if hasattr(part, 'text') and part.text:
-                        result["thought"] = part.text
-                        self._log_raw_response(part.text)
-                    
-                    # Function Callパート
-                    if hasattr(part, 'function_call') and part.function_call:
-                        fc = part.function_call
-                        
-                        server_name = "unknown"
-                        tool_name = fc.name
-                        args = _proto_to_native(fc.args) if fc.args else {}
+        return None
+    
+    def convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict]:
+        """
+        プロバイダー固有形式に変換
+        (agent_state.py から呼び出し用)
+        """
+        return self._provider.convert_messages(messages)
 
-                        # マッピングから正式名称を検索
-                        if fc.name in self.gemini_tool_mapping:
-                            mapped = self.gemini_tool_mapping[fc.name]
-                            server_name = mapped["server"]
-                            tool_name = mapped["name"]
-                        else:
-                            # フォールバック (マッピングにない場合や古い形式への対応)
-                            if "__" in fc.name:
-                                parts_list = fc.name.split("__", 1)
-                                server_name = parts_list[0]
-                                tool_name = parts_list[1]
-                            elif "_" in fc.name:
-                                 parts_list = fc.name.split("_", 1)
-                                 server_name = parts_list[0]
-                                 tool_name = parts_list[1]
-                        
-                        result["tool_call"] = {
-                            "server": server_name,
-                            "name": tool_name,
-                            "arguments": args
-                        }
-                        
-                        self._log_raw_response(f"Function Call: {fc.name}, Args: {fc.args}")
-            
-            return result
-            
-        except LLMError:
-            raise
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            raise LLMError(f"Gemini APIエラー: {e}")
 
-    def _log_raw_response(self, content: str):
-        """デバッグ用に生のレスポンスをファイルに保存する。"""
-        try:
-            log_dir = "logs"
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"response_{timestamp}.txt"
-            filepath = os.path.join(log_dir, filename)
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(str(content))
-                
-            # Log Rotation
-            files = sorted([
-                os.path.join(log_dir, f) for f in os.listdir(log_dir) 
-                if f.startswith("response_") and f.endswith(".txt")
-            ])
-            
-            if len(files) > Config.MAX_LOG_FILES:
-                files_to_delete = files[:len(files) - Config.MAX_LOG_FILES]
-                for f in files_to_delete:
-                    try:
-                        os.remove(f)
-                    except OSError as e:
-                        logger.warning(f"Failed to delete old log {f}: {e}")
+# === 後方互換性のためのヘルパー関数 ===
 
-        except Exception as e:
-            logger.error(f"Failed to log raw response: {e}")
+def _proto_to_native(obj):
+    """Convert proto objects (MapComposite, RepeatedComposite) to native Python types."""
+    if hasattr(obj, 'items'):
+        return {k: _proto_to_native(v) for k, v in obj.items()}
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):
+        return [_proto_to_native(item) for item in obj]
+    else:
+        return obj

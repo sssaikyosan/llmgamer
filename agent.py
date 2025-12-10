@@ -73,7 +73,7 @@ class GameAgent:
         return capture_screenshot()
 
     async def execute_tool(self, server_name: str, tool_name: str, args: Dict[str, Any]):
-        logger.debug(f"Executing: {server_name}.{tool_name} with {args}")
+        logger.debug(f"Executing: {server_name}__{tool_name} with {args}")
 
         # INTERCEPTION for system tools
         if server_name == "system" and tool_name == "request_tool":
@@ -106,7 +106,7 @@ class GameAgent:
             
         # Update Dashboard with tool log (timestamped) - Args not shown in GUI
         timestamp = datetime.now().strftime("%H:%M:%S")
-        update_dashboard_state(tool_log=f"[{timestamp}] Executed {server_name}.{tool_name}\nResult: {output}")
+        update_dashboard_state(tool_log=f"[{timestamp}] Executed {server_name}__{tool_name}\nResult: {output}")
 
         return output
 
@@ -165,13 +165,13 @@ class GameAgent:
         if role == "Operator":
             if not filtered_tools:
                 logger.warning("[Operator] No tools available! Check if workspace MCP servers are running.")
-                all_tools_list = [t["server"] + "." + t["name"] for t in all_tools]
+                all_tools_list = [t["server"] + "__" + t["name"] for t in all_tools]
                 logger.warning(f"[Operator] All available tools: {all_tools_list}")
             else:
-                avail_list = [t["server"] + "." + t["name"] for t in filtered_tools]
+                avail_list = [t["server"] + "__" + t["name"] for t in filtered_tools]
                 logger.info(f"[Operator] Available tools: {avail_list}")
         # Tools string for Prompt
-        tools_str = ", ".join([f"{t['server']}.{t['name']}" for t in filtered_tools]) if filtered_tools else "(none)"
+        tools_str = ", ".join([f"{t['server']}__{t['name']}" for t in filtered_tools]) if filtered_tools else "(none)"
         
         # 3. Prepare Prompt
         current_time_str = self.state.get_current_time_str(timestamp)
@@ -313,7 +313,7 @@ class GameAgent:
                 
                 # Record Tool Result to Main History
                 if tool_call_id:
-                     self.state.add_tool_result(tool_call_id, f"{server}.{name}", result_str, agent_role=role)
+                     self.state.add_tool_result(tool_call_id, f"{server}__{name}", result_str, agent_role=role)
                 
                 # 3. Add function response to phase_messages (must come right after function_call)
                 #    In Gemini, function_response is a 'user' turn with a special part structure
@@ -331,7 +331,7 @@ class GameAgent:
                 
                 # If Operator, save as Last Action
                 if role == "Operator":
-                    self.state.variables["last_action"] = f"Executed {server}.{name} with {args}"
+                    self.state.variables["last_action"] = f"Executed {server}__{name} with {args}"
                     logger.info(f"Recorded Last Action: {self.state.variables['last_action']}")
             else:
                 break # No response

@@ -7,10 +7,13 @@ load_dotenv()
 class Config:
     """Centralized configuration for the application."""
     
-    # Core Settings
-    # Core Settings
-    LLM_PROVIDER = "gemini"
-    API_KEY = os.getenv("API_KEY")
+    # === LLM Provider Selection ===
+    # Supported: "gemini", "claude"
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+    
+    # === API Keys (Provider-specific) ===
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
 
     MAX_HISTORY = int(os.getenv("MAX_HISTORY", "5"))
     MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "100"))
@@ -18,17 +21,28 @@ class Config:
     # Language Settings
     AI_LANGUAGE = os.getenv("AI_LANGUAGE", "English")
     
-    # Model Selection Logic
-    _GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview" 
-    _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
+    # === Model Selection ===
+    # Gemini Models
+    _GEMINI_MODEL_DEFAULT = "gemini-2.0-flash-exp"
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)
+    
+    # Claude Models
+    _CLAUDE_MODEL_DEFAULT = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", _CLAUDE_MODEL_DEFAULT)
     
     @classmethod
     def get_model_name(cls) -> str:
-        """動的にモデル名を取得。常にGeminiモデルを返す。"""
-        return cls._GEMINI_MODEL
+        """動的にモデル名を取得。現在のプロバイダーに応じたモデルを返す。"""
+        if cls.LLM_PROVIDER == "claude":
+            return cls.CLAUDE_MODEL
+        return cls.GEMINI_MODEL
     
-    # 後方互換性のためのプロパティ（非推奨）
-    MODEL_NAME = _GEMINI_MODEL  # デフォルト値、get_model_name()の使用を推奨
+    @classmethod
+    def get_api_key(cls) -> str:
+        """動的にAPIキーを取得。現在のプロバイダーに応じたキーを返す。"""
+        if cls.LLM_PROVIDER == "claude":
+            return cls.CLAUDE_API_KEY
+        return cls.GEMINI_API_KEY
     
     # MCP サーバーで使用可能なライブラリリスト
     # 標準ライブラリ (time, re, json, ctypes等) は常に使用可能

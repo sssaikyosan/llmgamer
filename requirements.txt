@@ -8,6 +8,7 @@ fastmcp
 
 # LLM
 google-generativeai
+anthropic
 
 # Vision
 mss

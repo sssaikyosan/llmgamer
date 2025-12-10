@@ -60,14 +60,16 @@ class AgentState:
         }
         
         if tool_call:
-            tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
+            # プロバイダーが発行したIDがあればそれを使用（Claude）
+            # なければ自前で生成（Gemini）
+            tool_call_id = tool_call.get('id') or f"call_{uuid.uuid4().hex[:8]}"
             full_name = f"{tool_call.get('server', 'unknown')}.{tool_call.get('name', 'unknown')}"
             
             message["tool_calls"] = [{
                 "id": tool_call_id,
                 "type": "function",
                 "function": {
-                    "name": full_name, # strict name for internal storage
+                    "name": full_name,  # strict name for internal storage
                     "arguments": json.dumps(tool_call.get("arguments", {}))
                 }
             }]

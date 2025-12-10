@@ -87,7 +87,13 @@ class MCPManager:
                                 "type": "object",
                                 "properties": {
                                     "title": {"type": "string"},
-                                    "content": {"type": "string"}
+                                    "content": {"type": "string"},
+                                    "accuracy": {
+                                        "type": "integer",
+                                        "description": "Confidence score 0-100",
+                                        "minimum": 0,
+                                        "maximum": 100
+                                    }
                                 },
                                 "required": ["title", "content"]
                             }
@@ -407,7 +413,8 @@ class MCPManager:
                 for m in memories:
                     title = m.get("title")
                     content = m.get("content")
-                    res = self.memory_manager_instance.set_memory(title, content)
+                    accuracy = m.get("accuracy", 0) # Default 0 if not set, but agent should set it
+                    res = self.memory_manager_instance.set_memory(title, content, accuracy)
                     results.append(res)
                 output_text = "\n".join(results)
 

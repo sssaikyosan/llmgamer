@@ -585,7 +585,7 @@
                             if (Object.keys(data.memories).length === 0) {
                                 ul.innerHTML = '<li style="color: #52525b; font-style: italic;">No active memories</li>';
                             } else {
-                                for (const [key, value] of Object.entries(data.memories)) {
+                                for (const [key, valueObj] of Object.entries(data.memories)) {
                                     const li = document.createElement('li');
                                     li.className = 'memory-item';
 
@@ -594,10 +594,33 @@
                                         li.classList.add('open');
                                     }
 
+                                    // Extract data (handle legacy string vs new object)
+                                    let contentText = "";
+                                    let accuracy = 0;
+                                    if (typeof valueObj === 'string') {
+                                        contentText = valueObj;
+                                        accuracy = null;
+                                    } else {
+                                        contentText = valueObj.content || "";
+                                        accuracy = valueObj.accuracy !== undefined ? valueObj.accuracy : 0;
+                                    }
+
+                                    // Color code accuracy
+                                    let accColor = "#71717a"; // gray
+                                    if (accuracy !== null) {
+                                        if (accuracy >= 80) accColor = "#22c55e"; // green
+                                        else if (accuracy >= 50) accColor = "#f59e0b"; // amber
+                                        else accColor = "#ef4444"; // red
+                                    }
+
+                                    const accBadge = accuracy !== null 
+                                        ? `<span style="font-size: 0.75rem; color: ${accColor}; border: 1px solid ${accColor}; padding: 1px 4px; border-radius: 4px; margin-right: 8px;">${accuracy}%</span>` 
+                                        : '';
+
                                     // Header (clickable)
                                     const header = document.createElement('div');
                                     header.className = 'memory-header';
-                                    header.innerHTML = `<span class="memory-key">${key}</span><span class="memory-toggle">▼</span>`;
+                                    header.innerHTML = `<div>${accBadge}<span class="memory-key">${key}</span></div><span class="memory-toggle">▼</span>`;
                                     header.onclick = function () {
                                         li.classList.toggle('open');
                                     };
@@ -605,7 +628,7 @@
                                     // Content (collapsible)
                                     const content = document.createElement('div');
                                     content.className = 'memory-content';
-                                    content.textContent = value;
+                                    content.textContent = contentText;
 
                                     li.appendChild(header);
                                     li.appendChild(content);

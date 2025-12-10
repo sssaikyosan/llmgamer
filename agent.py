@@ -374,14 +374,28 @@ class GameAgent:
 
             # Restore MemoryManager
             if "memory_manager" in data and isinstance(data["memory_manager"], dict):
-                # Handle migration from old format {key: {content, category}} to new {key: content}
                 memories = data["memory_manager"]
                 new_memories = {}
                 for k, v in memories.items():
+                    # Format: {title: {"content": str, "accuracy": int}}
                     if isinstance(v, dict) and "content" in v:
-                         new_memories[k] = v["content"]
-                    else:
+                         # Valid dict format (new or old with category), preserve it
+                         # Ensure accuracy exists
+                         if "accuracy" not in v:
+                             v["accuracy"] = 0 # Default for migrated data
                          new_memories[k] = v
+                    elif isinstance(v, str):
+                         # Legacy strict string format -> upgrade to dict
+                         new_memories[k] = {
+                             "content": v,
+                             "accuracy": 0 # Unknown accuracy for legacy
+                         }
+                    else:
+                         # Unknown format, try to save as string content
+                         new_memories[k] = {
+                             "content": str(v),
+                             "accuracy": 0
+                         }
                 self.memory_manager.memories = new_memories
             
             # Restore AgentState

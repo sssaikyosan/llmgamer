@@ -36,7 +36,7 @@ class DashboardState:
         self.thought_history: list = []  # 思考履歴を保持
         self.max_thought_history: int = 10  # 最大保持数
         self.mission: str = "Waiting for instructions..."
-        self.memories: Dict[str, str] = {}
+        self.memories: Dict[str, Dict[str, Any]] = {}
         self.tools: Dict[str, Any] = {}
         self.tool_log: str = "Waiting for tool execution..."
         self.error: Optional[str] = None

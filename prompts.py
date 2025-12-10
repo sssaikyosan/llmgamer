@@ -37,9 +37,16 @@ You do NOT play the game. You do NOT create tools. You ONLY save/update memories
 1. **Apply Vision**: Analyze the screenshot to determine the game state.
 2. **Evaluate Strategy**: Did the last action help progress/learning?
 3. **Record Information**: Save important info (goals, game state, coordinates, patterns, etc.).
+4. **Judge Accuracy**: Estimate your confidence in the memory (0-100%). High for facts, low for guesses.
 
 **OUTPUT**:
-Use the `memory_store` tools (`set_memory`) to save information. You can save multiple memories in one call.
+Use the `memory_store` tools (`set_memory`) to save information. 
+IMPORTANT: You MUST provide an `accuracy` (integer 0-100) for each memory. 
+- 100: Certain fact (e.g., read directly from screen)
+- 50-80: Deduction or pattern observation
+- 0-40: Guess or hypothesis
+
+You can save multiple memories in one call.
 If no new information needs to be saved, you can briefly explain why and take no action (Wait).
 """
 

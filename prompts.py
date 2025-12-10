@@ -21,6 +21,12 @@ Example format:
 Then, if needed, call the appropriate tool. If no action is needed, just output your reasoning and do not call any tools.
 """
 
+    if Config.AI_LANGUAGE == "Japanese":
+        base_instruction += """
+**LANGUAGE REQUIREMENT**:
+You MUST respond in Japanese.
+"""
+
     if role == "MemorySaver":
         return base_instruction + """
 **ROLE: MEMORY SAVER (Strategist & Recorder)**

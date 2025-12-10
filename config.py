@@ -15,6 +15,9 @@ class Config:
     MAX_HISTORY = int(os.getenv("MAX_HISTORY", "5"))
     MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "100"))
     
+    # Language Settings
+    AI_LANGUAGE = os.getenv("AI_LANGUAGE", "English")
+    
     # Model Selection Logic
     _GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview" 
     _GEMINI_MODEL = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_DEFAULT)

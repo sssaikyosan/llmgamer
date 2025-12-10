@@ -84,6 +84,7 @@ graph LR
     ```ini
     API_KEY=your_gemini_api_key_here
     GEMINI_MODEL=gemini-3-pro-preview  # または gemini-1.5-pro 等
+    AI_LANGUAGE=Japanese               # エージェントの応答言語 (Japanese/English)
     ```
 
 ## 使い方

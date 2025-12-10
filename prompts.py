@@ -39,6 +39,29 @@ You do NOT play the game. You do NOT create tools. You ONLY save/update memories
 3. **Record Information**: Save important info (goals, game state, coordinates, patterns, etc.).
 4. **Judge Accuracy**: Estimate your confidence in the memory using the accuracy scale below.
 
+**PROACTIVE RECORDING** (CRITICAL):
+Your memory is the foundation of the entire system's learning.
+SAVE AGGRESSIVELY - even uncertain ideas can become valuable insights!
+
+✅ **DO SAVE**:
+- Hypotheses to be tested later ("Maybe clicking X does Y?")
+- Uncertain patterns ("It seems like... but not sure")
+- Wild guesses and intuitions ("I have a feeling that...")
+- Ideas that MIGHT be useful later
+- Speculations about game mechanics
+- "What if..." scenarios
+- Observations you're not sure about
+
+❌ **DON'T SKIP** information just because:
+- You're not 100% sure
+- It might be wrong
+- It seems trivial
+- It's just a guess
+
+The ACCURACY score lets you mark uncertainty - use low scores (0-49%) freely!
+A wrong hypothesis with accuracy=20% is VALUABLE because it can be tested and updated.
+Silence (not recording) means the system learns NOTHING.
+
 **ACCURACY SCORING GUIDE** (MUST follow this scale):
 | Score    | Confidence Level | When to use | Examples |
 |----------|------------------|-------------|----------|
@@ -58,10 +81,10 @@ You do NOT play the game. You do NOT create tools. You ONLY save/update memories
 **OUTPUT**:
 Use the `memory_store` tools (`set_memory`) to save information. 
 IMPORTANT: You MUST provide an `accuracy` (integer 0-100) for each memory.
-Be honest with your accuracy assessment - overconfidence leads to bad decisions!
+Low accuracy is OKAY - it's better than not recording at all!
 
 You can save multiple memories in one call.
-If no new information needs to be saved, you can briefly explain why and take no action (Wait).
+Prefer SAVING over WAITING. If in doubt, save it with low accuracy.
 """
 
     elif role == "ToolCreator":
@@ -114,18 +137,49 @@ When the tool is created and ready, explicitly state that you are done.
 
     elif role == "ResourceCleaner":
         return base_instruction + """
-**ROLE: RESOURCE CLEANER (Garbage Collector)**
-Your job is to keep the system efficient by removing obsolete information and tools.
+**ROLE: RESOURCE CLEANER (Garbage Collector & Validator)**
+Your job is to keep the system efficient by removing obsolete information and tools,
+AND to validate/update hypotheses based on new evidence.
 You have access to all memories and tools.
 
+**CRITICAL RULES - WHAT TO DELETE**:
+✅ **DELETE**:
+- Memories that have been **DISPROVEN** by new evidence (e.g., "Strategy X works" but it failed)
+- Memories that are **OUTDATED** (old game state, replaced by newer info)
+- Memories that are **DUPLICATES** of better, more accurate ones
+- Tools that are **BROKEN** and replaced by working ones
+- Tools that are **UNUSED** for a long time
+
+❌ **DO NOT DELETE**:
+- Low accuracy memories (30%, 20%, etc.) - these are HYPOTHESES to be tested!
+- "Uncertain" or "maybe" memories - they have value as learning opportunities
+- Memories just because they haven't been useful YET
+- Any memory without clear evidence it's WRONG
+
+**UNDERSTANDING ACCURACY SCORES**:
+- Low accuracy (0-49%) = Hypothesis/Guess → KEEP for testing
+- Moderate accuracy (50-69%) = Partial evidence → KEEP and watch
+- High accuracy (70-100%) = Well-supported → Keep unless disproven
+
 **RESPONSIBILITIES**:
-1. **Prune Memories**: Delete memories that are no longer true or relevant.
-2. **Remove Unused Tools**: Delete MCP servers that were temporary or are replaced by better ones.
-3. **Consolidate**: If there are duplicate tools/memories, keep the best one and delete the rest.
+1. **Validate Hypotheses**: Check if low-accuracy memories have been proven/disproven.
+   - If PROVEN → Update accuracy to reflect new confidence (use set_memory to overwrite)
+   - If DISPROVEN → Delete it
+   - If UNTESTED → Leave it alone!
+2. **Prune Confirmed-Wrong Memories**: Only delete what's proven false or outdated.
+3. **Remove Broken Tools**: Delete MCP servers that have been replaced by better versions.
+4. **Consolidate Duplicates**: If same info exists multiple times, keep the most accurate one.
+
+**BEFORE DELETING, ASK**:
+- Is this memory PROVEN wrong, or just uncertain?
+- Has this hypothesis been tested yet?
+- Could this information become useful later?
+
+When in doubt, **DON'T DELETE**. A cluttered memory is better than a forgetful one.
 
 **OUTPUT**:
 Use `cleanup_resources(memory_titles=[...], mcp_servers=[...])` to delete everything at once.
-If everything is clean, take no action (Wait).
+If everything is clean or uncertain, take no action (Wait).
 """
 
     elif role == "Operator":
